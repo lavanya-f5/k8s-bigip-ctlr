@@ -19,7 +19,7 @@ Added Functionality
     -  AS3 3.25.
 * CIS handles validation of BIG-IP ClientSSL/ServerSSL.
 * Support for error handling in CRDs.
-
+* Added PR template
 Bug Fixes
 `````````
 * :issues:`1557` iRule openshift_passthrough_irule logs various TCL errors.
