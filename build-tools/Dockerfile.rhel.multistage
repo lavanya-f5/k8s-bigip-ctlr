@@ -1,4 +1,4 @@
-FROM registry.access.redhat.com/ubi8/ubi AS rhel-builder
+FROM registry.redhat.io/ubi8/ruby-25 AS rhel-builder
 
 # GOLANG install steps
 USER root
@@ -6,13 +6,10 @@ ENV GOLANG_VERSION 1.15
 ENV GOLANG_SRC_URL https://golang.org/dl/go$GOLANG_VERSION.src.tar.gz
 ENV GOLANG_SRC_SHA256 69438f7ed4f532154ffaf878f3dfd83747e7a00b70b3556eddabf7aaee28ac3a
 
-RUN REPOLIST=rhel-8-for-x86_64-baseos-rpms,rhel-8-for-x86_64-supplementary-rpms,rhel-8-for-x86_64-appstream-rpms && \
-	yum -y update-minimal --disablerepo "*" --enablerepo rhel-8-for-x86_64-baseos-rpms --setopt=tsflags=nodocs \
-	  --security --sec-severity=Important --sec-severity=Critical && \
-	yum -y install scl-utils cmake && \
+RUN yum update --disablerepo=* --enablerepo=ubi-8-appstream --enablerepo=ubi-8-baseos -y --setopt=tsflags=nodocs \
+    --security --sec-severity=Important --sec-severity=Critical && \&& rm -rf /var/cache/yum
+RUN yum install --disablerepo=* --enablerepo=ubi-8-appstream --enablerepo=ubi-8-baseos scl-utils cmake gcc openssl golang git make rsync wget python3 -y && rm -rf /var/cache/yum && \
 	gem install licensee --pre && \
-	yum -y install --disablerepo "*" --enablerepo ${REPOLIST} --setopt=tsflags=nodocs \
-	  gcc openssl golang git make rsync wget python3 && \
 # Add epel repo for dpkg install
 	curl -o epel-release-latest-8.noarch.rpm -SL https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm \
             --retry 9 --retry-max-time 0 -C - && \
@@ -41,7 +38,12 @@ ARG COVERALLS_TOKEN
 ARG BUILD_VERSION
 ARG BUILD_INFO
 ARG LICENSE
-
+#install gingko
+RUN go get github.com/wadey/gocovmerge && \
+	go get golang.org/x/tools/cmd/cover && \
+	go get github.com/mattn/goveralls && \
+	go get github.com/onsi/ginkgo/ginkgo && \
+	go get github.com/onsi/gomega
 # install gosu
 # https://github.com/tianon/gosu/blob/master/INSTALL.md#from-centos
 ENV GOSU_VERSION 1.10
@@ -60,7 +62,7 @@ RUN set -ex && \
 
 # Copy Source code to workdir
 COPY . .
-RUN /bin/bash -ex ./build-tools/rel-build.sh
+RUN /bin/bash -ex $BASE_PATH/$REPO_NAME/build-tools/rel-build.sh
 
 
 FROM registry.redhat.io/ubi7/ubi-minimal as final
@@ -86,14 +88,18 @@ WORKDIR $APPPATH
 ARG BUILD_INFO
 ARG VERSION_INFO
 
-COPY build-tools/help.md /tmp/
+COPY $BASE_PATH/$REPO_NAME/build-tools/help.md /tmp/
 #COPY LICENSE /licenses/
-
-RUN microdnf --enablerepo=rhel-7-server-rpms --enablerepo=rhel-7-server-optional-rpms \
-      --enablerepo=rhel-server-rhscl-7-rpms install --nodocs \
-      golang-github-cpuguy83-go-md2man rh-python36 git shadow-utils && \
+# Add epel repo for golang-github-cpuguy83-go-md2man install
+RUN	curl -o epel-release-latest-7.noarch.rpm -SL https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm \
+            --retry 9 --retry-max-time 0 -C - && \
+	rpm -ivh epel-release-latest-7.noarch.rpm && rm epel-release-latest-7.noarch.rpm && \
+	microdnf -y install --enablerepo=epel --setopt=tsflags=nodocs golang-github-cpuguy83-go-md2man
+RUN microdnf --enablerepo=ubi-7 \
+      --enablerepo=ubi-7-server-devtools-rpms --enablerepo=ubi-7-server-extras-rpms --enablerepo=ubi-7-server-optional-rpms --enablerepo=ubi-server-rhscl-7-rpms install --nodocs \
+      rh-python36 git shadow-utils && \
     microdnf update && \
-    microdnf --enablerepo=rhel-7-server-rpms update nss-tools nss-softokn nss-util && \
+    microdnf --enablerepo=ubi-7 --enablerepo=ubi-7-server-devtools-rpms --enablerepo=ubi-7-server-extras-rpms --enablerepo=ubi-7-server-optional-rpms --enablerepo=ubi-server-rhscl-7-rpms update nss-tools nss-softokn nss-util && \
     go-md2man -in /tmp/help.md -out /help.1 && rm -f /tmp/help.md && \
     adduser ctlr && \
     microdnf remove golang-github-cpuguy83-go-md2man git fipscheck fipscheck-lib  less libedit \
