@@ -10,8 +10,8 @@ pool:
   vmImage: 'ubuntu-latest'
 
 variables:
-        imageName: 'fatherlinux/ubi-azure-pipelines-build'
-        serviceConnection: 'quayServiceConnection'
+        imageName: 'n.srivastav/k8s-bigip-ctlr-azure'
+        serviceConnection: 'n.srivastav'
 
 steps:
 - task: Docker@2
@@ -20,7 +20,7 @@ steps:
     command: build
     containerRegistry: $(serviceConnection)
     repository: $(imageName)
-    Dockerfile: Dockerfile-build
+    Dockerfile: build-tools/Dockerfile.rhel.multistage
     tags: latest
 - task: Docker@2
   displayName: Push image to quay.io
