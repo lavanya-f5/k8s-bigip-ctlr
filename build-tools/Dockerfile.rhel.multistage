@@ -1,4 +1,4 @@
-FROM registry.redhat.io/ubi8/ruby-25 AS rhel-builder
+FROM registry.access.redhat.com/ubi8/ubi AS rhel-builder
 
 # GOLANG install steps
 USER root
