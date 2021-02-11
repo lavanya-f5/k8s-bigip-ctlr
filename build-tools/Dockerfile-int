@@ -1,10 +1,7 @@
 FROM quay.io/n.srivastav/k8s-bigip-ctlr-azure:base_builder as base 
 
-USER root
-
-
 ENV BASE_PATH "$GOPATH/src/github.com/F5Networks"
-RUN mkdir -p "$BASE_PATH" 
+RUN mkdir -p "$BASE_PATH"
 ENV REPO_NAME k8s-bigip-ctlr
 WORKDIR "$BASE_PATH/$REPO_NAME"
 
@@ -15,9 +12,7 @@ ARG BUILD_INFO
 ARG LICENSE
 
 # Copy Source code to workdir
-COPY .. .
-RUN pwd
-RUN ls
+COPY . .
 RUN /bin/bash -ex $BASE_PATH/$REPO_NAME/build-tools/rel-build.sh
 
 

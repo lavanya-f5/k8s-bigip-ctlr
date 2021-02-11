@@ -1,4 +1,4 @@
-FROM registry.redhat.io/ubi8/ruby-25 
+FROM registry.redhat.io/ubi8/ruby-25
 
 # GOLANG install steps
 USER root
@@ -36,6 +36,7 @@ RUN go get github.com/wadey/gocovmerge && \
 	go get github.com/mattn/goveralls && \
 	go get github.com/onsi/ginkgo/ginkgo && \
 	go get github.com/onsi/gomega
+
 # install gosu
 # https://github.com/tianon/gosu/blob/master/INSTALL.md#from-centos
 ENV GOSU_VERSION 1.10
