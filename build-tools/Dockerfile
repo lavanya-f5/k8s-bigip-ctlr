@@ -1,3 +1,4 @@
+
 FROM registry.redhat.io/ubi8/ruby-25 AS rhel-builder
 
 # GOLANG install steps
@@ -6,10 +7,13 @@ ENV GOLANG_VERSION 1.15
 ENV GOLANG_SRC_URL https://golang.org/dl/go$GOLANG_VERSION.src.tar.gz
 ENV GOLANG_SRC_SHA256 69438f7ed4f532154ffaf878f3dfd83747e7a00b70b3556eddabf7aaee28ac3a
 
-RUN yum update --disablerepo=* --enablerepo=ubi-8-appstream --enablerepo=ubi-8-baseos -y --setopt=tsflags=nodocs \
-    --security --sec-severity=Important --sec-severity=Critical && \&& rm -rf /var/cache/yum
-RUN yum install --disablerepo=* --enablerepo=ubi-8-appstream --enablerepo=ubi-8-baseos scl-utils cmake gcc openssl golang git make rsync wget python3 -y && rm -rf /var/cache/yum && \
+RUN REPOLIST=rhel-8-for-x86_64-baseos-rpms,rhel-8-for-x86_64-supplementary-rpms,rhel-8-for-x86_64-appstream-rpms && \
+	yum -y update-minimal --disablerepo "*" --enablerepo rhel-8-for-x86_64-baseos-rpms --setopt=tsflags=nodocs \
+	  --security --sec-severity=Important --sec-severity=Critical && \
+	yum -y install scl-utils cmake && \
 	gem install licensee --pre && \
+	yum -y install --disablerepo "*" --enablerepo ${REPOLIST} --setopt=tsflags=nodocs \
+	  gcc openssl golang git make rsync wget python3 && \
 # Add epel repo for dpkg install
 	curl -o epel-release-latest-8.noarch.rpm -SL https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm \
             --retry 9 --retry-max-time 0 -C - && \
@@ -28,22 +32,16 @@ RUN yum install --disablerepo=* --enablerepo=ubi-8-appstream --enablerepo=ubi-8-
 
 ENV GOPATH /go
 ENV PATH $GOPATH/bin:/usr/local/go/bin:$PATH
-ENV BASE_PATH "$GOPATH/src/github.com/F5Networks"
-RUN mkdir -p "$BASE_PATH" "$GOPATH/bin" && chmod -R 777 "$GOPATH"
-ENV REPO_NAME k8s-bigip-ctlr
+ENV BASE_PATH "$GOPATH/github.com/lavanya-f5"
+RUN mkdir -p "$GOPATH/src" "$BASE_PATH" "$GOPATH/bin" && chmod -R 777 "$GOPATH"
 WORKDIR "$BASE_PATH/$REPO_NAME"
 
-ARG RUN_TESTS=0
+ARG RUN_TESTS=false
 ARG COVERALLS_TOKEN
 ARG BUILD_VERSION
 ARG BUILD_INFO
 ARG LICENSE
-#install gingko
-RUN go get github.com/wadey/gocovmerge && \
-	go get golang.org/x/tools/cmd/cover && \
-	go get github.com/mattn/goveralls && \
-	go get github.com/onsi/ginkgo/ginkgo && \
-	go get github.com/onsi/gomega
+
 # install gosu
 # https://github.com/tianon/gosu/blob/master/INSTALL.md#from-centos
 ENV GOSU_VERSION 1.10
@@ -60,20 +58,21 @@ RUN set -ex && \
 # verify that the binary works
 	gosu nobody true
 
-# Copy Source code to workdir
-COPY . .
-RUN /bin/bash -ex $BASE_PATH/$REPO_NAME/build-tools/rel-build.sh
+# Copy Source code
+COPY ./$REPO_NAME $BASE_PATH
+
+RUN /bin/bash -ex $WORKDIR/k8s-bigip-controller/build-tools/rel-build.sh
 
 
 FROM registry.redhat.io/ubi7/ubi-minimal as final
 
-LABEL name="f5networks/k8s-bigip-ctlr" \
+LABEL name="lavanya-f5/k8s-bigip-controller" \
       vendor="F5 Networks" \
       # version - should be passed in via docker build
-      url="http://clouddocs.f5.com/products/connectors/k8s-bigip-ctlr/latest/" \
+      url="http://clouddocs.f5.com/products/connectors/k8s-bigip-controller/latest/" \
       summary="F5 BIG-IP Controller for Kubernetes" \
       description="Manages F5 BIG-IP from Kubernetes" \
-      run='docker run --name ${NAME} ${IMAGE} /app/bin/k8s-bigip-ctlr' \
+      run='docker run --name ${NAME} ${IMAGE} /app/bin/k8s-bigip-controller' \
       io.k8s.description="Manages F5 BIG-IP from Kubernetes" \
       io.k8s.display-name="F5 BIG-IP Controller for Kubernetes" \
       io.openshift.expose-services="" \
@@ -88,18 +87,14 @@ WORKDIR $APPPATH
 ARG BUILD_INFO
 ARG VERSION_INFO
 
-COPY $BASE_PATH/$REPO_NAME/build-tools/help.md /tmp/
+COPY build-tools/help.md /tmp/
 #COPY LICENSE /licenses/
-# Add epel repo for golang-github-cpuguy83-go-md2man install
-RUN	curl -o epel-release-latest-7.noarch.rpm -SL https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm \
-            --retry 9 --retry-max-time 0 -C - && \
-	rpm -ivh epel-release-latest-7.noarch.rpm && rm epel-release-latest-7.noarch.rpm && \
-	microdnf -y install --enablerepo=epel --setopt=tsflags=nodocs golang-github-cpuguy83-go-md2man
-RUN microdnf --enablerepo=ubi-7 \
-      --enablerepo=ubi-7-server-devtools-rpms --enablerepo=ubi-7-server-extras-rpms --enablerepo=ubi-7-server-optional-rpms --enablerepo=ubi-server-rhscl-7-rpms install --nodocs \
-      rh-python36 git shadow-utils && \
+
+RUN microdnf --enablerepo=rhel-7-server-rpms --enablerepo=rhel-7-server-optional-rpms \
+      --enablerepo=rhel-server-rhscl-7-rpms install --nodocs \
+      golang-github-cpuguy83-go-md2man rh-python36 git shadow-utils && \
     microdnf update && \
-    microdnf --enablerepo=ubi-7 --enablerepo=ubi-7-server-devtools-rpms --enablerepo=ubi-7-server-extras-rpms --enablerepo=ubi-7-server-optional-rpms --enablerepo=ubi-server-rhscl-7-rpms update nss-tools nss-softokn nss-util && \
+    microdnf --enablerepo=rhel-7-server-rpms update nss-tools nss-softokn nss-util && \
     go-md2man -in /tmp/help.md -out /help.1 && rm -f /tmp/help.md && \
     adduser ctlr && \
     microdnf remove golang-github-cpuguy83-go-md2man git fipscheck fipscheck-lib  less libedit \
@@ -108,9 +103,9 @@ RUN microdnf --enablerepo=ubi-7 \
     && echo "{\"version\": \"${VERSION_INFO}\", \"build\": \"${BUILD_INFO}\"}" \
           > $APPPATH/VERSION_BUILD.json
 
-COPY --from=rhel-builder "/build/mnt/linux-amd64-release-go1.15/bin/k8s-bigip-ctlr" $APPPATH/bin
+COPY --from=rhel-builder "/go/out/bin/k8s-bigip-controller" $APPPATH/bin
 
 USER ctlr
 
 # Run the run application in the projects bin directory.
-CMD [ "/app/bin/k8s-bigip-ctlr" ]
+CMD [ "/app/bin/k8s-bigip-controller" ]
