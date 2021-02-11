@@ -32,7 +32,7 @@ steps:
       command: build
       containerRegistry: $(serviceConnection)
       repository: $(imageName)
-      Dockerfile: build-tools/Dockerfile.rhel.multistage
+      Dockerfile: build-tools/Dockerfile-int
       buildContext: .
       tags: latest
       arguments: "--build-arg BUILD_INFO=$(BUILD_INFO) --build-arg BUILD_VERSION=$(BUILD_VERSION) --build-arg RUN_TESTS=$(RUN_TESTS)"
