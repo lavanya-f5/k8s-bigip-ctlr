@@ -1386,24 +1386,40 @@ func (appMgr *Manager) syncIngresses(
 					}
 				}
 			}
-
-			if ok, found, updated := appMgr.handleConfigForType(
-				rsCfg, sKey, rsMap, rsName, svcPortMap,
-				svc, appInf, svcs, ing); !ok {
-				stats.vsUpdated += updated
-				continue
-			} else {
-				if updated > 0 && !appMgr.processAllMultiSvc(len(rsCfg.Pools),
-					rsCfg.GetName()) {
-					updated -= 1
-				}
-				stats.vsFound += found
-				stats.vsUpdated += updated
-				if updated > 0 {
-					msg := fmt.Sprintf(
-						"Created a ResourceConfig '%v' for the Ingress.",
-						rsCfg.GetName())
-					appMgr.recordIngressEvent(ing, "ResourceConfigured", msg)
+            for _,svcName := range svcs {
+				// Lookup the service
+            	svcBackend := sKey.Namespace + "/" + svcName
+            	svc,_,_ := appInf.svcInformer.GetIndexer().GetByKey(svcBackend)
+            	//if backend svc exists, process the ingress
+            	if nil != svc{
+            		//backend svc key of ingress
+					svcKey := serviceQueueKey{
+						ServiceName: svcName,
+						Namespace: sKey.Namespace,
+					}
+					svcPortMap := make(map[int32]bool)
+					for _, portSpec := range svc.(*v1.Service).Spec.Ports {
+						svcPortMap[portSpec.Port] = false
+					}
+					if ok, found, updated := appMgr.handleConfigForType(
+						rsCfg, svcKey, rsMap, rsName, svcPortMap,
+						svc.(*v1.Service), appInf, svcs, ing); !ok {
+						stats.vsUpdated += updated
+						continue
+					} else {
+						if updated > 0 && !appMgr.processAllMultiSvc(len(rsCfg.Pools),
+							rsCfg.GetName()) {
+							updated -= 1
+						}
+						stats.vsFound += found
+						stats.vsUpdated += updated
+						if updated > 0 {
+							msg := fmt.Sprintf(
+								"Created a ResourceConfig '%v' for the Ingress.",
+								rsCfg.GetName())
+							appMgr.recordIngressEvent(ing, "ResourceConfigured", msg)
+						}
+					}
 				}
 			}
 			// Set the Ingress Status IP address
