@@ -1933,6 +1933,9 @@ func (ctlr *Controller) processTransportServers(
 
 	if ctlr.PoolMemberType == NodePort {
 		ctlr.updatePoolMembersForNodePort(rsCfg, virtual.ObjectMeta.Namespace)
+	} else if ctlr.PoolMemberType == NodePortLocal {
+		//supported with antrea cni.
+		ctlr.updatePoolMembersForNPL(rsCfg, virtual.ObjectMeta.Namespace)
 	} else {
 		ctlr.updatePoolMembersForCluster(rsCfg, virtual.ObjectMeta.Namespace)
 	}

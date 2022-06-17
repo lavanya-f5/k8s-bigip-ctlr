@@ -137,6 +137,9 @@ func (ctlr *Controller) processRoutes(routeGroup string, triggerDelete bool) err
 		for _, namespace := range ctlr.resources.extdSpecMap[routeGroup].namespaces {
 			if ctlr.PoolMemberType == NodePort {
 				ctlr.updatePoolMembersForNodePort(rsCfg, namespace)
+			} else if ctlr.PoolMemberType == NodePortLocal {
+				//supported with antrea cni.
+				ctlr.updatePoolMembersForNPL(rsCfg, namespace)
 			} else {
 				ctlr.updatePoolMembersForCluster(rsCfg, namespace)
 			}
@@ -399,6 +402,9 @@ func (ctlr *Controller) updatePoolMembersForRoutes(namespace string) {
 		for _, ns := range ctlr.getNamespacesForRouteGroup(routeGroup) {
 			if ctlr.PoolMemberType == NodePort {
 				ctlr.updatePoolMembersForNodePort(freshRsCfg, ns)
+			} else if ctlr.PoolMemberType == NodePortLocal {
+				//supported with antrea cni.
+				ctlr.updatePoolMembersForNPL(freshRsCfg, namespace)
 			} else {
 				ctlr.updatePoolMembersForCluster(freshRsCfg, ns)
 			}
