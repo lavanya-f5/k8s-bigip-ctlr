@@ -347,6 +347,7 @@ type (
 	portRef struct {
 		name string
 		port int32
+		svcport int32
 	}
 	poolMembersInfo struct {
 		svcType   v1.ServiceType

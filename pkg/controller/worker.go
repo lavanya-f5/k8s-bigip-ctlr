@@ -1514,12 +1514,23 @@ func (ctlr *Controller) updatePoolMembersForNodePort(
 			log.Debugf("Requested service backend %s not of NodePort or LoadBalancer type",
 				svcKey)
 		}
-
+        var svcmem []PoolMember
 		for _, svcPort := range poolMemInfo.portSpec {
 			if svcPort.TargetPort == pool.ServicePort {
 				rsCfg.MetaData.Active = true
 				rsCfg.Pools[index].Members =
 					ctlr.getEndpointsForNodePort(svcPort.NodePort, pool.NodeMemberLabel)
+			}
+			//look for svcPort match
+			if intstr.FromInt(int(svcPort.Port)) == pool.ServicePort {
+				svcmem = ctlr.getEndpointsForNodePort(svcPort.NodePort, pool.NodeMemberLabel)
+			}
+		}
+		//check if members exist with svcPort match
+		if rsCfg.Pools[index].Members == nil {
+			if svcmem != nil {
+				rsCfg.MetaData.Active = true
+				rsCfg.Pools[index].Members = svcmem
 			}
 		}
 	}
@@ -1536,18 +1547,30 @@ func (ctlr *Controller) updatePoolMembersForCluster(
 		svcKey := pool.ServiceNamespace + "/" + svcName
 
 		poolMemInfo, ok := ctlr.resources.poolMemCache[svcKey]
-
+        log.Debugf("lavanya: poolMemInfo is %v", poolMemInfo)
 		if (!ok || len(poolMemInfo.memberMap) == 0) && pool.ServiceNamespace == namespace {
 			rsCfg.Pools[index].Members = []PoolMember{}
 			continue
 		}
-
+		var svcmem []PoolMember
 		for ref, mems := range poolMemInfo.memberMap {
+			//checking for matching targetPort of service
 			if ref.name != pool.ServicePort.StrVal && ref.port != pool.ServicePort.IntVal {
+				//check for matching of servicePort of service. If no targetPort match found, we will use svcPort match
+				if ref.svcport == pool.ServicePort.IntVal {
+					svcmem = mems
+				}
 				continue
 			}
 			rsCfg.MetaData.Active = true
 			rsCfg.Pools[index].Members = mems
+		}
+		if rsCfg.Pools[index].Members == nil {
+			//check for svcmem
+			if svcmem != nil {
+				rsCfg.MetaData.Active = true
+				rsCfg.Pools[index].Members = svcmem
+			}
 		}
 	}
 }
@@ -2197,7 +2220,8 @@ func (ctlr *Controller) processService(
 					members = append(members, member)
 				}
 			}
-			portKey := portRef{name: p.Name, port: p.Port}
+			svcport, _ := fetchSvcPort(p.Port, svc.Spec.Ports)
+			portKey := portRef{name: p.Name, port: p.Port, svcport: svcport}
 			pmi.memberMap[portKey] = members
 		}
 	}
@@ -3172,4 +3196,13 @@ func fetchPortString(port intstr.IntOrString) string {
 		return fmt.Sprintf("%v", port.IntVal)
 	}
 	return ""
+}
+
+func fetchSvcPort(port int32, portspec []v1.ServicePort) (int32,bool) {
+	for _, svcport := range portspec {
+		if svcport.TargetPort.IntVal == port {
+			return svcport.Port,true
+		}
+	}
+	return 0,false
 }
