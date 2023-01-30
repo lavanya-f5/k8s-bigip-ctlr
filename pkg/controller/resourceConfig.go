@@ -275,14 +275,14 @@ func (ctlr *Controller) framePoolName(ns string, pool cisapiv1.Pool, host string
 
 	poolName := pool.Name
 	if poolName == "" {
-		targetPort := intstr.IntOrString{IntVal: pool.ServicePort}
+		targetPort := pool.ServicePort
 
 		if (intstr.IntOrString{}) == targetPort {
 			svcNamespace := ns
 			if pool.ServiceNamespace != "" {
 				svcNamespace = pool.ServiceNamespace
 			}
-			targetPort = ctlr.fetchTargetPort(svcNamespace, pool.Service, pool.ServicePort)
+			targetPort = ctlr.fetchTargetPort(svcNamespace, pool.Service, pool.ServicePort.IntVal)
 		}
 		poolName = formatPoolName(ns, pool.Service, targetPort, pool.NodeMemberLabel, host)
 	}
@@ -434,10 +434,13 @@ func (ctlr *Controller) prepareRSConfigFromVirtualServer(
 			continue
 		}
 		framedPools[poolName] = struct{}{}
-		targetPort := ctlr.fetchTargetPort(vs.Namespace, pl.Service, pl.ServicePort)
+		var targetPort intstr.IntOrString
+		if pl.ServicePort.StrVal == "" {
+			targetPort = ctlr.fetchTargetPort(vs.Namespace, pl.Service, pl.ServicePort.IntVal)
+		}
 
 		if (intstr.IntOrString{}) == targetPort {
-			targetPort = intstr.IntOrString{IntVal: pl.ServicePort}
+			targetPort = pl.ServicePort
 		}
 		svcNamespace := vs.Namespace
 		if pl.ServiceNamespace != "" {
@@ -458,7 +461,7 @@ func (ctlr *Controller) prepareRSConfigFromVirtualServer(
 			pool.MonitorNames = append(pool.MonitorNames, MonitorName{Name: pl.Monitor.Name, Reference: pl.Monitor.Reference})
 		} else if pl.Monitor.Send != "" && pl.Monitor.Type != "" {
 			if pl.Name == "" {
-				monitorName = formatMonitorName(vs.ObjectMeta.Namespace, pl.Service, pl.Monitor.Type, pl.ServicePort, vs.Spec.Host, pl.Path)
+				monitorName = formatMonitorName(vs.ObjectMeta.Namespace, pl.Service, pl.Monitor.Type, pl.ServicePort.IntVal, vs.Spec.Host, pl.Path)
 			}
 			pool.MonitorNames = append(pool.MonitorNames, MonitorName{Name: JoinBigipPath(rsCfg.Virtual.Partition, monitorName)})
 			monitor := Monitor{
@@ -481,7 +484,7 @@ func (ctlr *Controller) prepareRSConfigFromVirtualServer(
 					if monitor.TargetPort != 0 {
 						formatPort = monitor.TargetPort
 					} else {
-						formatPort = pl.ServicePort
+						formatPort = pl.ServicePort.IntVal
 					}
 					if monitor.Name == "" {
 						monitorName = formatMonitorName(vs.ObjectMeta.Namespace, pl.Service, monitor.Type, formatPort, vs.Spec.Host, pl.Path)
@@ -1593,9 +1596,9 @@ func (ctlr *Controller) prepareRSConfigFromTransportServer(
 	if vs.Spec.Pool.ServiceNamespace != "" {
 		svcNamespace = vs.Spec.Pool.ServiceNamespace
 	}
-	targetPort := ctlr.fetchTargetPort(svcNamespace, vs.Spec.Pool.Service, vs.Spec.Pool.ServicePort)
+	targetPort := ctlr.fetchTargetPort(svcNamespace, vs.Spec.Pool.Service, vs.Spec.Pool.ServicePort.IntVal)
 	if (intstr.IntOrString{}) == targetPort {
-		targetPort = intstr.IntOrString{IntVal: vs.Spec.Pool.ServicePort}
+		targetPort = vs.Spec.Pool.ServicePort
 	}
 
 	pool := Pool{
@@ -1613,7 +1616,7 @@ func (ctlr *Controller) prepareRSConfigFromTransportServer(
 		pool.MonitorNames = append(pool.MonitorNames, MonitorName{Name: monitorName, Reference: vs.Spec.Pool.Monitor.Reference})
 	} else if vs.Spec.Pool.Monitor.Type != "" {
 		if vs.Spec.Pool.Name == "" {
-			monitorName = formatMonitorName(vs.ObjectMeta.Namespace, vs.Spec.Pool.Service, vs.Spec.Pool.Monitor.Type, vs.Spec.Pool.ServicePort, "", "")
+			monitorName = formatMonitorName(vs.ObjectMeta.Namespace, vs.Spec.Pool.Service, vs.Spec.Pool.Monitor.Type, vs.Spec.Pool.ServicePort.IntVal, "", "")
 		}
 		pool.MonitorNames = append(pool.MonitorNames, MonitorName{Name: JoinBigipPath(rsCfg.Virtual.Partition, monitorName)})
 
@@ -1638,7 +1641,7 @@ func (ctlr *Controller) prepareRSConfigFromTransportServer(
 				if monitor.TargetPort != 0 {
 					formatPort = monitor.TargetPort
 				} else {
-					formatPort = pl.ServicePort
+					formatPort = pl.ServicePort.IntVal
 				}
 
 				if monitor.Name == "" {

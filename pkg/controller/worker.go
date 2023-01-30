@@ -1825,6 +1825,8 @@ func (ctlr *Controller) updatePoolMembersForCluster(
 		}
 
 		for ref, mems := range poolMemInfo.memberMap {
+			log.Debugf("lavanya: looking for pool members with service port %v with %v",pool.ServicePort.IntVal, pool.ServicePort.StrVal)
+			log.Debugf("lavanya: pool member map is %v",poolMemInfo.memberMap)
 			if ref.name != pool.ServicePort.StrVal && ref.port != pool.ServicePort.IntVal {
 				continue
 			}
