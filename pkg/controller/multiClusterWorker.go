@@ -47,9 +47,9 @@ func (ctlr *Controller) processResourceExternalClusterServices(rscKey resourceRe
 			// if informer not found for cluster, setup and start informer
 			_, clusterKeyFound := ctlr.multiClusterPoolInformers[svc.ClusterName]
 			if !clusterKeyFound {
-				ctlr.setupAndStartMultiClusterInformers(svcKey)
+				go ctlr.setupAndStartMultiClusterInformers(svcKey)
 			} else if _, found := ctlr.multiClusterPoolInformers[svc.ClusterName][svc.Namespace]; !found {
-				ctlr.setupAndStartMultiClusterInformers(svcKey)
+				go ctlr.setupAndStartMultiClusterInformers(svcKey)
 			}
 		} else {
 			log.Warningf("invalid cluster reference found cluster: %v resource:%v", svc.ClusterName, rscKey)
