@@ -22,6 +22,7 @@ import (
 
 var _ = Describe("Routes", func() {
 	var mockCtlr *mockController
+	var bigipLabel string
 	BeforeEach(func() {
 		mockCtlr = newMockController()
 		mockCtlr.multiClusterConfigs = clustermanager.NewMultiClusterConfig()
@@ -58,6 +59,12 @@ var _ = Describe("Routes", func() {
 			},
 		}
 		mockCtlr.bigIpMap = make(map[cisapiv1.BigIpConfig]BigIpResourceConfig)
+		bigipConfig := cisapiv1.BigIpConfig{
+			BigIpLabel:   "bigip1",
+			BigIpAddress: "10.8.0.5",
+		}
+		mockCtlr.bigIpMap[bigipConfig] = BigIpResourceConfig{ltmConfig: make(LTMConfig), gtmConfig: make(GTMConfig)}
+		bigipLabel = BigIPLabel
 	})
 
 	Describe("Routes", func() {
@@ -136,8 +143,9 @@ var _ = Describe("Routes", func() {
 				Partition: "test",
 			}
 			Expect(err).To(BeNil(), "Failed to process routes")
-			Expect(len(mockCtlr.resources.ltmConfig["test"].ResourceMap["samplevs_443"].Policies)).To(BeEquivalentTo(0), "Policy should not be created for passthrough route")
-			dg, ok := mockCtlr.resources.ltmConfig["test"].ResourceMap["samplevs_443"].IntDgMap[mapKey]
+			bigipConfig := mockCtlr.getBIGIPConfig(bigipLabel)
+			Expect(len(mockCtlr.resources.bigIpMap[bigipConfig].ltmConfig["test"].ResourceMap["samplevs_443"].Policies)).To(BeEquivalentTo(0), "Policy should not be created for passthrough route")
+			dg, ok := mockCtlr.resources.bigIpMap[bigipConfig].ltmConfig["test"].ResourceMap["samplevs_443"].IntDgMap[mapKey]
 			Expect(ok).To(BeTrue(), "datagroup should be created for passthrough route")
 			Expect(dg[ns].Records[0].Name).To(BeEquivalentTo("foo.com"), "Invalid vsHostname in datagroup")
 			Expect(dg[ns].Records[0].Data).To(BeEquivalentTo("foo_80_default"), "Invalid vsHostname in datagroup")
@@ -515,7 +523,8 @@ var _ = Describe("Routes", func() {
 			//Process ENDS with non-matching domain
 			mockCtlr.addEDNS(newEDNS)
 			mockCtlr.processExternalDNS(newEDNS, false)
-			gtmConfig := mockCtlr.resources.gtmConfig[DEFAULT_GTM_PARTITION].WideIPs
+			bigipConfig := mockCtlr.getBIGIPConfig(bigipLabel)
+			gtmConfig := mockCtlr.resources.bigIpMap[bigipConfig].gtmConfig[DEFAULT_GTM_PARTITION].WideIPs
 			DEFAULT_GTM_PARTITION = DEFAULT_GTM_PARTITION + "_gtm"
 			Expect(len(gtmConfig)).To(Equal(1))
 			Expect(len(gtmConfig["test.com"].Pools)).To(Equal(1))
@@ -525,14 +534,14 @@ var _ = Describe("Routes", func() {
 			//delete EDNS
 			mockCtlr.deleteEDNS(newEDNS)
 			mockCtlr.processExternalDNS(newEDNS, true)
-			gtmConfig = mockCtlr.resources.gtmConfig[DEFAULT_GTM_PARTITION].WideIPs
+			gtmConfig = mockCtlr.resources.bigIpMap[bigipConfig].gtmConfig[DEFAULT_GTM_PARTITION].WideIPs
 			Expect(len(gtmConfig)).To(Equal(0))
 
 			// Modify EDNS with matching domain and create again
 			mockCtlr.addEDNS(newEDNS)
 			newEDNS.Spec.DomainName = "pytest-foo-1.com"
 			mockCtlr.processExternalDNS(newEDNS, false)
-			gtmConfig = mockCtlr.resources.gtmConfig[DEFAULT_GTM_PARTITION].WideIPs
+			gtmConfig = mockCtlr.resources.bigIpMap[bigipConfig].gtmConfig[DEFAULT_GTM_PARTITION].WideIPs
 			Expect(len(gtmConfig)).To(Equal(1))
 			Expect(len(gtmConfig["pytest-foo-1.com"].Pools)).To(Equal(1))
 			// Pool member should be present
@@ -542,7 +551,7 @@ var _ = Describe("Routes", func() {
 			mockCtlr.deleteRoute(route1)
 			mockCtlr.deleteHostPathMapEntry(route1)
 			mockCtlr.processRoutes(namespace1, false)
-			gtmConfig = mockCtlr.resources.gtmConfig[DEFAULT_GTM_PARTITION].WideIPs
+			gtmConfig = mockCtlr.resources.bigIpMap[bigipConfig].gtmConfig[DEFAULT_GTM_PARTITION].WideIPs
 			Expect(len(gtmConfig)).To(Equal(1))
 			Expect(len(gtmConfig["pytest-foo-1.com"].Pools)).To(Equal(1))
 			// No pool member should be present
@@ -597,7 +606,7 @@ var _ = Describe("Routes", func() {
 			//Test with 2nd route with bigIpPartition
 			mockCtlr.addEDNS(barEDNS)
 			mockCtlr.processExternalDNS(barEDNS, false)
-			gtmConfig = mockCtlr.resources.gtmConfig[DEFAULT_GTM_PARTITION].WideIPs
+			gtmConfig = mockCtlr.resources.bigIpMap[bigipConfig].gtmConfig[DEFAULT_GTM_PARTITION].WideIPs
 			Expect(len(gtmConfig)).To(Equal(2))
 			Expect(len(gtmConfig["pytest-bar-1.com"].Pools)).To(Equal(1))
 			Expect(len(gtmConfig["pytest-bar-1.com"].Pools[0].Members)).To(Equal(1))
@@ -605,7 +614,7 @@ var _ = Describe("Routes", func() {
 
 			mockCtlr.deleteEDNS(barEDNS)
 			mockCtlr.processExternalDNS(barEDNS, true)
-			gtmConfig = mockCtlr.resources.gtmConfig[DEFAULT_GTM_PARTITION].WideIPs
+			gtmConfig = mockCtlr.resources.bigIpMap[bigipConfig].gtmConfig[DEFAULT_GTM_PARTITION].WideIPs
 			Expect(len(gtmConfig)).To(Equal(1))
 
 			//Remove route group
@@ -632,7 +641,7 @@ var _ = Describe("Routes", func() {
 			Expect(err).To(BeNil())
 			Expect(isProcessed).To(BeTrue())
 
-			gtmConfig = mockCtlr.resources.gtmConfig[DEFAULT_GTM_PARTITION].WideIPs
+			gtmConfig = mockCtlr.resources.bigIpMap[bigipConfig].gtmConfig[DEFAULT_GTM_PARTITION].WideIPs
 			Expect(len(gtmConfig)).To(Equal(1))
 			Expect(len(gtmConfig["pytest-foo-1.com"].Pools)).To(Equal(1))
 			//No pool members should present
@@ -642,7 +651,7 @@ var _ = Describe("Routes", func() {
 			barEDNS.Spec.Pools[0].Monitor.Type = "tcp"
 			mockCtlr.addEDNS(barEDNS)
 			mockCtlr.processExternalDNS(barEDNS, false)
-			gtmConfig = mockCtlr.resources.gtmConfig[DEFAULT_GTM_PARTITION].WideIPs
+			gtmConfig = mockCtlr.resources.bigIpMap[bigipConfig].gtmConfig[DEFAULT_GTM_PARTITION].WideIPs
 			Expect(len(gtmConfig)).To(Equal(2))
 			Expect(len(gtmConfig["pytest-foo-1.com"].Pools)).To(Equal(1))
 			Expect(len(gtmConfig["pytest-bar-1.com"].Pools[0].Members)).To(Equal(1))
@@ -659,7 +668,7 @@ var _ = Describe("Routes", func() {
 			}
 			mockCtlr.addEDNS(barEDNS)
 			mockCtlr.processExternalDNS(barEDNS, false)
-			gtmConfig = mockCtlr.resources.gtmConfig[DEFAULT_GTM_PARTITION].WideIPs
+			gtmConfig = mockCtlr.resources.bigIpMap[bigipConfig].gtmConfig[DEFAULT_GTM_PARTITION].WideIPs
 			Expect(len(gtmConfig)).To(Equal(2))
 			Expect(len(gtmConfig["pytest-foo-1.com"].Pools)).To(Equal(1))
 			Expect(len(gtmConfig["pytest-bar-1.com"].Pools[0].Members)).To(Equal(1))
@@ -860,8 +869,9 @@ var _ = Describe("Routes", func() {
 			parition := mockCtlr.resources.extdSpecMap[routeGroup].partition
 			vsName := frameRouteVSName(mockCtlr.resources.extdSpecMap[routeGroup].global.VServerName, mockCtlr.resources.extdSpecMap[routeGroup].global.VServerAddr, portStruct{protocol: "https", port: 443})
 			Expect(err).To(BeNil())
-			Expect(len(mockCtlr.resources.ltmConfig[parition].ResourceMap[vsName].IRulesMap) == 1).To(BeTrue())
-			Expect(mockCtlr.resources.ltmConfig["test"].ResourceMap[vsName].Pools[0].ConnectionLimit).
+			bigipConfig := mockCtlr.getBIGIPConfig(bigipLabel)
+			Expect(len(mockCtlr.resources.bigIpMap[bigipConfig].ltmConfig[parition].ResourceMap[vsName].IRulesMap) == 1).To(BeTrue())
+			Expect(mockCtlr.resources.bigIpMap[bigipConfig].ltmConfig["test"].ResourceMap[vsName].Pools[0].ConnectionLimit).
 				To(Equal(int32(5)), "pod concurrent connections not processed")
 
 			var alternateBackend []routeapi.RouteTargetReference
@@ -878,7 +888,7 @@ var _ = Describe("Routes", func() {
 			mockCtlr.resources.invertedNamespaceLabelMap[routeGroup] = routeGroup
 			err = mockCtlr.processRoutes(routeGroup, false)
 			Expect(err).To(BeNil())
-			Expect(len(mockCtlr.resources.ltmConfig[parition].ResourceMap[vsName].IRulesMap) == 1).To(BeTrue())
+			Expect(len(mockCtlr.resources.bigIpMap[bigipConfig].ltmConfig[parition].ResourceMap[vsName].IRulesMap) == 1).To(BeTrue())
 
 			spec2 := routeapi.RouteSpec{
 				Host: "pytest-foo-1.com",
@@ -901,8 +911,8 @@ var _ = Describe("Routes", func() {
 			Expect(err).To(BeNil())
 
 			abPathIRule := getRSCfgResName(vsName, ABPathIRuleName)
-			Expect(len(mockCtlr.resources.ltmConfig["test"].ResourceMap[vsName].IRulesMap) == 2).To(BeTrue())
-			Expect(mockCtlr.resources.ltmConfig["test"].ResourceMap[vsName].IRulesMap[NameRef{abPathIRule, parition}].Name == abPathIRule).To(BeTrue())
+			Expect(len(mockCtlr.resources.bigIpMap[bigipConfig].ltmConfig["test"].ResourceMap[vsName].IRulesMap) == 2).To(BeTrue())
+			Expect(mockCtlr.resources.bigIpMap[bigipConfig].ltmConfig["test"].ResourceMap[vsName].IRulesMap[NameRef{abPathIRule, parition}].Name == abPathIRule).To(BeTrue())
 
 		})
 
@@ -1353,9 +1363,10 @@ var _ = Describe("Routes", func() {
 
 			err := mockCtlr.processRoutes(ns, false)
 			Expect(err).To(BeNil(), "Failed to process routes")
-			Expect(len(mockCtlr.Controller.resources.ltmConfig["test"].ResourceMap["samplevs_443"].Policies)).
+			bigipconfig := mockCtlr.getBIGIPConfig(bigipLabel)
+			Expect(len(mockCtlr.Controller.resources.bigIpMap[bigipconfig].ltmConfig["test"].ResourceMap["samplevs_443"].Policies)).
 				To(BeNumerically(">", 0), "Policy should not be empty")
-			createdPolicies := mockCtlr.resources.ltmConfig["test"].ResourceMap["samplevs_443"].Policies
+			createdPolicies := mockCtlr.resources.bigIpMap[bigipconfig].ltmConfig["test"].ResourceMap["samplevs_443"].Policies
 
 			checkWAFRules := func(policies Policies) bool {
 				defaultWAFDisableRule := false
@@ -1921,8 +1932,9 @@ var _ = Describe("Routes", func() {
 			err = mockCtlr.processRoutes(routeGroup, false)
 
 			Expect(err).To(BeNil())
-			Expect(mockCtlr.resources.ltmConfig["test"].ResourceMap["nextgenroutes_443"].Pools[0].Balance == "least-connections-node").To(BeTrue())
-			Expect(len(mockCtlr.resources.ltmConfig["test"].ResourceMap["nextgenroutes_443"].Policies[0].Rules) == 3).To(BeTrue())
+			bigipConfig := mockCtlr.getBIGIPConfig(bigipLabel)
+			Expect(mockCtlr.resources.bigIpMap[bigipConfig].ltmConfig["test"].ResourceMap["nextgenroutes_443"].Pools[0].Balance == "least-connections-node").To(BeTrue())
+			Expect(len(mockCtlr.resources.bigIpMap[bigipConfig].ltmConfig["test"].ResourceMap["nextgenroutes_443"].Policies[0].Rules) == 3).To(BeTrue())
 
 			extConfig = `
 {
@@ -2045,8 +2057,8 @@ var _ = Describe("Routes", func() {
 				Partition:   "test",
 				TimeUntilUp: &zero,
 			}
-			Expect(mockCtlr.resources.ltmConfig["test"].ResourceMap["nextgenroutes_443"].Pools[0].MonitorNames[0].Name).To(Equal("foo_80_default_monitor"))
-			Expect(mockCtlr.resources.ltmConfig["test"].ResourceMap["nextgenroutes_443"].Monitors[0]).To(Equal(expectedDefaultTCPMonitor))
+			Expect(mockCtlr.resources.bigIpMap[bigipConfig].ltmConfig["test"].ResourceMap["nextgenroutes_443"].Pools[0].MonitorNames[0].Name).To(Equal("foo_80_default_monitor"))
+			Expect(mockCtlr.resources.bigIpMap[bigipConfig].ltmConfig["test"].ResourceMap["nextgenroutes_443"].Monitors[0]).To(Equal(expectedDefaultTCPMonitor))
 
 			// Verify autoMonitorTimeout
 			extConfig = `
@@ -2088,8 +2100,8 @@ var _ = Describe("Routes", func() {
 				TimeUntilUp: &zero,
 			}
 			partition := mockCtlr.getPartitionForBIGIP("")
-			Expect(mockCtlr.resources.ltmConfig[partition].ResourceMap["nextgenroutes_443"].Pools[0].MonitorNames[0].Name).To(Equal("foo_80_default_monitor"))
-			Expect(mockCtlr.resources.ltmConfig[partition].ResourceMap["nextgenroutes_443"].Monitors[0]).To(Equal(expectedDefaultTCPMonitor))
+			Expect(mockCtlr.resources.bigIpMap[bigipConfig].ltmConfig[partition].ResourceMap["nextgenroutes_443"].Pools[0].MonitorNames[0].Name).To(Equal("foo_80_default_monitor"))
+			Expect(mockCtlr.resources.bigIpMap[bigipConfig].ltmConfig[partition].ResourceMap["nextgenroutes_443"].Monitors[0]).To(Equal(expectedDefaultTCPMonitor))
 
 		})
 	})

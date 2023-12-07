@@ -319,11 +319,9 @@ type (
 
 	// ResourceStore contain processed LTM and GTM resource data
 	ResourceStore struct {
-		ltmConfig      LTMConfig
-		ltmConfigCache LTMConfig
-		gtmConfig      GTMConfig
-		gtmConfigCache GTMConfig
-		nplStore       NPLStore
+		bigIpMap      BigIpMap
+		bigIpMapCache BigIpMap
+		nplStore      NPLStore
 		supplementContextCache
 	}
 
@@ -1274,11 +1272,12 @@ type TLSVersion string
 
 type (
 	PoolIdentifier struct {
-		poolName  string
-		partition string
-		rsName    string
-		path      string
-		rsKey     resourceRef
+		poolName   string
+		partition  string
+		rsName     string
+		path       string
+		rsKey      resourceRef
+		bigipLabel string
 	}
 
 	MultiClusterResourceStore struct {

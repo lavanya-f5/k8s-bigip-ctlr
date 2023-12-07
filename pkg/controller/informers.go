@@ -788,6 +788,9 @@ func (ctlr *Controller) enqueueUpdatedVirtualServer(oldObj, newObj interface{}) 
 		return
 	}
 	updateEvent := true
+	////TODO: get bigipLabel from cr resource or service address cr resource
+	//	//Phase1 setting bigipLabel to default
+	bigipLabel := BigIPLabel
 	oldVSPartition := ctlr.getCRPartition(oldVS.Spec.Partition)
 	newVSPartition := ctlr.getCRPartition(newVS.Spec.Partition)
 	if oldVS.Spec.VirtualServerAddress != newVS.Spec.VirtualServerAddress ||
@@ -802,7 +805,7 @@ func (ctlr *Controller) enqueueUpdatedVirtualServer(oldObj, newObj interface{}) 
 
 		// delete vs from previous partition on priority when partition is changed
 		if oldVSPartition != newVSPartition {
-			ctlr.resources.updatePartitionPriority(oldVSPartition, 1)
+			ctlr.resources.updatePartitionPriority(oldVSPartition, 1, bigipLabel)
 		}
 
 		key := &rqKey{
@@ -892,7 +895,10 @@ func (ctlr *Controller) enqueueUpdatedTransportServer(oldObj, newObj interface{}
 
 		// delete vs from previous partition on priority when partition is changed
 		if oldVSPartition != newVSPartition {
-			ctlr.resources.updatePartitionPriority(oldVSPartition, 1)
+			////TODO: get bigipLabel from cr resource or service address cr resource
+			//	//Phase1 setting bigipLabel to default
+			bigipLabel := BigIPLabel
+			ctlr.resources.updatePartitionPriority(oldVSPartition, 1, bigipLabel)
 		}
 
 		key := &rqKey{
@@ -1002,7 +1008,10 @@ func (ctlr *Controller) enqueueUpdatedIngressLink(oldObj, newObj interface{}) {
 
 		// delete vs from previous partition on priority when partition is changed
 		if oldILPartition != newILPartition {
-			ctlr.resources.updatePartitionPriority(oldILPartition, 1)
+			////TODO: get bigipLabel from cr resource or service address cr resource
+			//	//Phase1 setting bigipLabel to default
+			bigipLabel := BigIPLabel
+			ctlr.resources.updatePartitionPriority(oldILPartition, 1, bigipLabel)
 		}
 
 		key := &rqKey{

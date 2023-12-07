@@ -629,9 +629,6 @@ func (ctlr *Controller) processResources() bool {
 	} else {
 		ctlr.resourceQueue.Forget(key)
 	}
-	// TODO: After processing resources per bigipLabel, update the BIGIPConfigmap with the latest config
-	// we have processed the resource but as controller is still in init state do not post the config
-	bigipMap := BigIpMap{}
 	if ctlr.initState {
 		return true
 	}
@@ -656,7 +653,7 @@ func (ctlr *Controller) processResources() bool {
 		// set prometheus resource metrics
 		ctlr.setPrometheusResourceCount()
 		// Put each BIGIPConfig per bigip  pair into specific requestChannel
-		for bigip, bigipConfig := range bigipMap {
+		for bigip, bigipConfig := range ctlr.resources.bigIpMap {
 			agent := ctlr.AgentMap[bigip.BigIpLabel]
 			config := ResourceConfigRequest{
 				bigipConfig:         bigip,
@@ -998,7 +995,9 @@ func (ctlr *Controller) processVirtualServers(
 		log.Debugf("Finished syncing virtual servers %+v (%v)",
 			virtual, endTime.Sub(startTime))
 	}()
-
+	//TODO: get bigipLabel from cr resource or service address cr resource
+	//Phase1 setting bigipLabel to default
+	bigipLabel := BigIPLabel
 	// Skip validation for a deleted Virtual Server
 	if !isVSDeleted {
 		// check if the virutal server matches all the requirements.
@@ -1130,12 +1129,12 @@ func (ctlr *Controller) processVirtualServers(
 			(portS.protocol == HTTP && !doVSHandleHTTP(virtuals, virtual)) ||
 			(isVSDeleted && portS.protocol == HTTPS && !doVSUseSameHTTPSPort(virtuals, virtual)) {
 			var hostnames []string
-			rsMap := ctlr.resources.getPartitionResourceMap(partition)
+			rsMap := ctlr.resources.getPartitionResourceMap(partition, bigipLabel)
 
 			if _, ok := rsMap[rsName]; ok {
 				hostnames = rsMap[rsName].MetaData.hosts
 			}
-			ctlr.deleteVirtualServer(partition, rsName)
+			ctlr.deleteVirtualServer(partition, rsName, bigipLabel)
 			if len(hostnames) > 0 {
 				ctlr.ProcessAssociatedExternalDNS(hostnames)
 			}
@@ -1259,7 +1258,7 @@ func (ctlr *Controller) processVirtualServers(
 
 	if !processingError {
 		var hostnames []string
-		rsMap := ctlr.resources.getPartitionResourceMap(partition)
+		rsMap := ctlr.resources.getPartitionResourceMap(partition, bigipLabel)
 
 		// Update ltmConfig with ResourceConfigs created for the current virtuals
 		for rsName, rsCfg := range vsMap {
@@ -1875,13 +1874,14 @@ func (ctlr *Controller) releaseIP(ipamLabel string, host string, key string) str
 	return ip
 }
 
-func (ctlr *Controller) updatePoolIdentifierForService(key MultiClusterServiceKey, rsKey resourceRef, svcPort intstr.IntOrString, poolName, partition, rsName, path string) {
+func (ctlr *Controller) updatePoolIdentifierForService(key MultiClusterServiceKey, rsKey resourceRef, svcPort intstr.IntOrString, poolName, partition, rsName, path string, bigipLabel string) {
 	poolId := PoolIdentifier{
-		poolName:  poolName,
-		partition: partition,
-		rsName:    rsName,
-		path:      path,
-		rsKey:     rsKey,
+		poolName:   poolName,
+		partition:  partition,
+		rsName:     rsName,
+		path:       path,
+		rsKey:      rsKey,
+		bigipLabel: bigipLabel,
 	}
 	multiClusterSvcConfig := MultiClusterServiceConfig{svcPort: svcPort}
 	if _, ok := ctlr.multiClusterResources.clusterSvcMap[key.clusterName]; !ok {
@@ -1901,7 +1901,7 @@ func (ctlr *Controller) updatePoolMembersForService(svcKey MultiClusterServiceKe
 		if svcPorts, ok2 := serviceKey[svcKey]; ok2 {
 			for _, poolIds := range svcPorts {
 				for poolId := range poolIds {
-					rsCfg := ctlr.getVirtualServer(poolId.partition, poolId.rsName)
+					rsCfg := ctlr.getVirtualServer(poolId.partition, poolId.rsName, poolId.bigipLabel)
 					if rsCfg == nil {
 						continue
 					}
@@ -1956,7 +1956,7 @@ func (ctlr *Controller) updatePoolMembersForService(svcKey MultiClusterServiceKe
 							freshRsCfg.Pools[index] = pool
 						}
 					}
-					_ = ctlr.resources.setResourceConfig(poolId.partition, poolId.rsName, freshRsCfg)
+					_ = ctlr.resources.setResourceConfig(poolId.partition, poolId.rsName, freshRsCfg, poolId.bigipLabel)
 				}
 			}
 		}
@@ -2276,6 +2276,9 @@ func (ctlr *Controller) processTransportServers(
 	}
 
 	var allVirtuals []*cisapiv1.TransportServer
+	//TODO: get bigipLabel from route resource or service address cr
+	// Phase1 setting bigipLabel to empty string
+	bigipLabel := BigIPLabel
 	if virtual.Spec.HostGroup != "" {
 		// grouping by hg across all namespaces
 		allVirtuals = ctlr.getAllTSFromMonitoredNamespaces()
@@ -2340,13 +2343,13 @@ func (ctlr *Controller) processTransportServers(
 	}
 
 	if isTSDeleted {
-		rsMap := ctlr.resources.getPartitionResourceMap(partition)
+		rsMap := ctlr.resources.getPartitionResourceMap(partition, bigipLabel)
 		var hostnames []string
 		if _, ok := rsMap[rsName]; ok {
 			hostnames = rsMap[rsName].MetaData.hosts
 		}
 
-		ctlr.deleteVirtualServer(partition, rsName)
+		ctlr.deleteVirtualServer(partition, rsName, bigipLabel)
 		if len(hostnames) > 0 {
 			ctlr.ProcessAssociatedExternalDNS(hostnames)
 		}
@@ -2409,7 +2412,7 @@ func (ctlr *Controller) processTransportServers(
 		name:      virtual.Name,
 	}] = struct{}{}
 
-	rsMap := ctlr.resources.getPartitionResourceMap(partition)
+	rsMap := ctlr.resources.getPartitionResourceMap(partition, BigIPLabel)
 	rsMap[rsName] = rsCfg
 
 	if len(rsCfg.MetaData.hosts) > 0 {
@@ -2543,7 +2546,9 @@ func (ctlr *Controller) processLBServices(
 	} else {
 		ctlr.unSetLBServiceIngressStatus(svc, ip)
 	}
-
+	//TODO: get bigipLabel from route resource or service address cr
+	// Phase1 setting bigipLabel to empty string
+	bigipLabel := BigIPLabel
 	for _, portSpec := range svc.Spec.Ports {
 
 		log.Debugf("Processing Service Type LB %s for port %v",
@@ -2554,12 +2559,12 @@ func (ctlr *Controller) processLBServices(
 		//Phase1 getting partition from bigipconfig index 0
 		partition := ctlr.getPartitionForBIGIP("")
 		if isSVCDeleted {
-			rsMap := ctlr.resources.getPartitionResourceMap(partition)
+			rsMap := ctlr.resources.getPartitionResourceMap(partition, bigipLabel)
 			var hostnames []string
 			if _, ok := rsMap[rsName]; ok {
 				hostnames = rsMap[rsName].MetaData.hosts
 			}
-			ctlr.deleteVirtualServer(partition, rsName)
+			ctlr.deleteVirtualServer(partition, rsName, bigipLabel)
 			if len(hostnames) > 0 {
 				ctlr.ProcessAssociatedExternalDNS(hostnames)
 			}
@@ -2602,9 +2607,9 @@ func (ctlr *Controller) processLBServices(
 			break
 		}
 
-		_ = ctlr.prepareRSConfigFromLBService(rsCfg, svc, portSpec)
+		_ = ctlr.prepareRSConfigFromLBService(rsCfg, svc, portSpec, bigipLabel)
 
-		rsMap := ctlr.resources.getPartitionResourceMap(partition)
+		rsMap := ctlr.resources.getPartitionResourceMap(partition, bigipLabel)
 
 		rsMap[rsName] = rsCfg
 		if len(rsCfg.MetaData.hosts) > 0 {
@@ -2708,176 +2713,183 @@ func (ctlr *Controller) processExternalDNS(edns *cisapiv1.ExternalDNS, isDelete 
 	if ctlr.managedResources.ManageEDNS == false {
 		return
 	}
-	if gtmPartitionConfig, ok := ctlr.resources.gtmConfig[DEFAULT_GTM_PARTITION]; ok {
-		if processedWIP, ok := gtmPartitionConfig.WideIPs[edns.Spec.DomainName]; ok {
-			if processedWIP.UID != string(edns.UID) {
-				log.Errorf("EDNS with same domain name %s present", edns.Spec.DomainName)
-				return
+	//TODO: get bigipLabel from route resource or service address cr
+	// Phase1 setting bigipLabel to empty string
+	bigipLabel := BigIPLabel
+	bigipConfig := ctlr.getBIGIPConfig(bigipLabel)
+	if bigipConfig != (cisapiv1.BigIpConfig{}) {
+		if _, ok := ctlr.resources.bigIpMap[bigipConfig]; ok {
+			if gtmPartitionConfig, ok := ctlr.resources.bigIpMap[bigipConfig].gtmConfig[DEFAULT_GTM_PARTITION]; ok {
+				if processedWIP, ok := gtmPartitionConfig.WideIPs[edns.Spec.DomainName]; ok {
+					if processedWIP.UID != string(edns.UID) {
+						log.Errorf("EDNS with same domain name %s present", edns.Spec.DomainName)
+						return
+					}
+				}
 			}
 		}
-	}
 
-	if isDelete {
-		if _, ok := ctlr.resources.gtmConfig[DEFAULT_GTM_PARTITION]; !ok {
+		if isDelete {
+			if _, ok := ctlr.resources.bigIpMap[bigipConfig].gtmConfig[DEFAULT_GTM_PARTITION]; !ok {
+				return
+			}
+
+			delete(ctlr.resources.bigIpMap[bigipConfig].gtmConfig[DEFAULT_GTM_PARTITION].WideIPs, edns.Spec.DomainName)
+			ctlr.TeemData.Lock()
+			ctlr.TeemData.ResourceType.ExternalDNS[edns.Namespace]--
+			ctlr.TeemData.Unlock()
 			return
 		}
 
-		delete(ctlr.resources.gtmConfig[DEFAULT_GTM_PARTITION].WideIPs, edns.Spec.DomainName)
 		ctlr.TeemData.Lock()
-		ctlr.TeemData.ResourceType.ExternalDNS[edns.Namespace]--
+		ctlr.TeemData.ResourceType.ExternalDNS[edns.Namespace] = len(ctlr.getAllExternalDNS(edns.Namespace))
 		ctlr.TeemData.Unlock()
-		return
-	}
 
-	ctlr.TeemData.Lock()
-	ctlr.TeemData.ResourceType.ExternalDNS[edns.Namespace] = len(ctlr.getAllExternalDNS(edns.Namespace))
-	ctlr.TeemData.Unlock()
-
-	wip := WideIP{
-		DomainName:         edns.Spec.DomainName,
-		RecordType:         edns.Spec.DNSRecordType,
-		LBMethod:           edns.Spec.LoadBalanceMethod,
-		PersistenceEnabled: edns.Spec.PersistenceEnabled,
-		PersistCidrIPv4:    edns.Spec.PersistCidrIPv4,
-		PersistCidrIPv6:    edns.Spec.PersistCidrIPv6,
-		TTLPersistence:     edns.Spec.TTLPersistence,
-		UID:                string(edns.UID),
-	}
-
-	if edns.Spec.ClientSubnetPreferred != nil {
-		wip.ClientSubnetPreferred = edns.Spec.ClientSubnetPreferred
-	}
-
-	if edns.Spec.TTLPersistence == 0 {
-		wip.TTLPersistence = 3600
-	}
-	if edns.Spec.PersistCidrIPv6 == 0 {
-		wip.PersistCidrIPv6 = 128
-	}
-	if edns.Spec.PersistCidrIPv4 == 0 {
-		wip.PersistCidrIPv4 = 32
-	}
-
-	if edns.Spec.DNSRecordType == "" {
-		wip.RecordType = "A"
-	}
-	if edns.Spec.LoadBalanceMethod == "" {
-		wip.LBMethod = "round-robin"
-	}
-
-	log.Debugf("Processing WideIP: %v", edns.Spec.DomainName)
-
-	partitions := ctlr.resources.getLTMPartitions()
-	//TODO: get bigip label from edns spec once we support multiple bigips
-	bigipLabel := "bigip1"
-	for _, pl := range edns.Spec.Pools {
-		UniquePoolName := strings.Replace(edns.Spec.DomainName, "*", "wildcard", -1) + "_" +
-			AS3NameFormatter(strings.TrimPrefix(ctlr.AgentMap[bigipLabel].CMURL, "https://")) + "_" + DEFAULT_GTM_PARTITION
-		log.Debugf("Processing WideIP Pool: %v", UniquePoolName)
-		pool := GSLBPool{
-			Name:          UniquePoolName,
-			RecordType:    pl.DNSRecordType,
-			LBMethod:      pl.LoadBalanceMethod,
-			PriorityOrder: pl.PriorityOrder,
-			DataServer:    pl.DataServerName,
-			Ratio:         pl.Ratio,
-		}
-		if pl.LBModeFallback != "" {
-			pool.LBModeFallBack = pl.LBModeFallback
-		} else {
-			pool.LBModeFallBack = "return-to-dns"
+		wip := WideIP{
+			DomainName:         edns.Spec.DomainName,
+			RecordType:         edns.Spec.DNSRecordType,
+			LBMethod:           edns.Spec.LoadBalanceMethod,
+			PersistenceEnabled: edns.Spec.PersistenceEnabled,
+			PersistCidrIPv4:    edns.Spec.PersistCidrIPv4,
+			PersistCidrIPv6:    edns.Spec.PersistCidrIPv6,
+			TTLPersistence:     edns.Spec.TTLPersistence,
+			UID:                string(edns.UID),
 		}
 
-		if pl.DNSRecordType == "" {
-			pool.RecordType = "A"
+		if edns.Spec.ClientSubnetPreferred != nil {
+			wip.ClientSubnetPreferred = edns.Spec.ClientSubnetPreferred
 		}
-		if pl.LoadBalanceMethod == "" {
-			pool.LBMethod = "round-robin"
-		}
-		for _, partition := range partitions {
-			rsMap := ctlr.resources.getPartitionResourceMap(partition)
 
-			for vsName, vs := range rsMap {
-				var found bool
-				for _, host := range vs.MetaData.hosts {
-					if host == edns.Spec.DomainName {
-						found = true
-						break
-					}
-				}
-				if found {
-					//No need to add insecure VS into wideIP pool if VS configured with httpTraffic as redirect
-					if vs.MetaData.Protocol == "http" && (vs.MetaData.httpTraffic == TLSRedirectInsecure || vs.MetaData.httpTraffic == TLSAllowInsecure) {
-						continue
-					}
-					preGTMServerName := ""
-					// add only one VS member to pool.
-					if len(pool.Members) > 0 && strings.HasPrefix(vsName, "ingress_link_") {
-						if strings.HasSuffix(vsName, "_443") {
-							pool.Members[0] = fmt.Sprintf("%v/%v/Shared/%v", preGTMServerName, partition, vsName)
-						}
-						continue
-					}
-					log.Debugf("Adding WideIP Pool Member: %v", fmt.Sprintf("/%v/Shared/%v",
-						partition, vsName))
-					pool.Members = append(
-						pool.Members,
-						fmt.Sprintf("%v/%v/Shared/%v", preGTMServerName, partition, vsName),
-					)
-				}
+		if edns.Spec.TTLPersistence == 0 {
+			wip.TTLPersistence = 3600
+		}
+		if edns.Spec.PersistCidrIPv6 == 0 {
+			wip.PersistCidrIPv6 = 128
+		}
+		if edns.Spec.PersistCidrIPv4 == 0 {
+			wip.PersistCidrIPv4 = 32
+		}
+
+		if edns.Spec.DNSRecordType == "" {
+			wip.RecordType = "A"
+		}
+		if edns.Spec.LoadBalanceMethod == "" {
+			wip.LBMethod = "round-robin"
+		}
+
+		log.Debugf("Processing WideIP: %v", edns.Spec.DomainName)
+
+		partitions := ctlr.resources.getLTMPartitions(bigipLabel)
+
+		for _, pl := range edns.Spec.Pools {
+			UniquePoolName := strings.Replace(edns.Spec.DomainName, "*", "wildcard", -1) + "_" +
+				AS3NameFormatter(strings.TrimPrefix(ctlr.AgentMap[bigipLabel].CMURL, "https://")) + "_" + DEFAULT_GTM_PARTITION
+			log.Debugf("Processing WideIP Pool: %v", UniquePoolName)
+			pool := GSLBPool{
+				Name:          UniquePoolName,
+				RecordType:    pl.DNSRecordType,
+				LBMethod:      pl.LoadBalanceMethod,
+				PriorityOrder: pl.PriorityOrder,
+				DataServer:    pl.DataServerName,
+				Ratio:         pl.Ratio,
 			}
-		}
-		if len(pl.Monitors) > 0 {
-			var monitors []Monitor
-			for i, monitor := range pl.Monitors {
-				monitors = append(monitors,
-					Monitor{
-						Name:      fmt.Sprintf("%s_monitor%d", UniquePoolName, i),
-						Partition: "Common",
-						Type:      monitor.Type,
-						Interval:  monitor.Interval,
-						Send:      monitor.Send,
-						Recv:      monitor.Recv,
-						Timeout:   monitor.Timeout})
-			}
-			pool.Monitors = monitors
-
-		} else if pl.Monitor.Type != "" {
-			// TODO: Need to change to DEFAULT_PARTITION from Common, once Agent starts to support DEFAULT_PARTITION
-			var monitors []Monitor
-
-			if pl.Monitor.Type == "http" || pl.Monitor.Type == "https" {
-				monitors = append(monitors,
-					Monitor{
-						Name:      UniquePoolName + "_monitor",
-						Partition: "Common",
-						Type:      pl.Monitor.Type,
-						Interval:  pl.Monitor.Interval,
-						Send:      pl.Monitor.Send,
-						Recv:      pl.Monitor.Recv,
-						Timeout:   pl.Monitor.Timeout,
-					})
+			if pl.LBModeFallback != "" {
+				pool.LBModeFallBack = pl.LBModeFallback
 			} else {
-				monitors = append(monitors,
-					Monitor{
-						Name:      UniquePoolName + "_monitor",
-						Partition: "Common",
-						Type:      pl.Monitor.Type,
-						Interval:  pl.Monitor.Interval,
-						Timeout:   pl.Monitor.Timeout,
-					})
+				pool.LBModeFallBack = "return-to-dns"
 			}
-			pool.Monitors = monitors
-		}
-		wip.Pools = append(wip.Pools, pool)
-	}
-	if _, ok := ctlr.resources.gtmConfig[DEFAULT_GTM_PARTITION]; !ok {
-		ctlr.resources.gtmConfig[DEFAULT_GTM_PARTITION] = GTMPartitionConfig{
-			WideIPs: make(map[string]WideIP),
-		}
-	}
 
-	ctlr.resources.gtmConfig[DEFAULT_GTM_PARTITION].WideIPs[wip.DomainName] = wip
+			if pl.DNSRecordType == "" {
+				pool.RecordType = "A"
+			}
+			if pl.LoadBalanceMethod == "" {
+				pool.LBMethod = "round-robin"
+			}
+			for _, partition := range partitions {
+				rsMap := ctlr.resources.getPartitionResourceMap(partition, bigipLabel)
+
+				for vsName, vs := range rsMap {
+					var found bool
+					for _, host := range vs.MetaData.hosts {
+						if host == edns.Spec.DomainName {
+							found = true
+							break
+						}
+					}
+					if found {
+						//No need to add insecure VS into wideIP pool if VS configured with httpTraffic as redirect
+						if vs.MetaData.Protocol == "http" && (vs.MetaData.httpTraffic == TLSRedirectInsecure || vs.MetaData.httpTraffic == TLSAllowInsecure) {
+							continue
+						}
+						preGTMServerName := ""
+						// add only one VS member to pool.
+						if len(pool.Members) > 0 && strings.HasPrefix(vsName, "ingress_link_") {
+							if strings.HasSuffix(vsName, "_443") {
+								pool.Members[0] = fmt.Sprintf("%v/%v/Shared/%v", preGTMServerName, partition, vsName)
+							}
+							continue
+						}
+						log.Debugf("Adding WideIP Pool Member: %v", fmt.Sprintf("/%v/Shared/%v",
+							partition, vsName))
+						pool.Members = append(
+							pool.Members,
+							fmt.Sprintf("%v/%v/Shared/%v", preGTMServerName, partition, vsName),
+						)
+					}
+				}
+			}
+			if len(pl.Monitors) > 0 {
+				var monitors []Monitor
+				for i, monitor := range pl.Monitors {
+					monitors = append(monitors,
+						Monitor{
+							Name:      fmt.Sprintf("%s_monitor%d", UniquePoolName, i),
+							Partition: "Common",
+							Type:      monitor.Type,
+							Interval:  monitor.Interval,
+							Send:      monitor.Send,
+							Recv:      monitor.Recv,
+							Timeout:   monitor.Timeout})
+				}
+				pool.Monitors = monitors
+
+			} else if pl.Monitor.Type != "" {
+				// TODO: Need to change to DEFAULT_PARTITION from Common, once Agent starts to support DEFAULT_PARTITION
+				var monitors []Monitor
+
+				if pl.Monitor.Type == "http" || pl.Monitor.Type == "https" {
+					monitors = append(monitors,
+						Monitor{
+							Name:      UniquePoolName + "_monitor",
+							Partition: "Common",
+							Type:      pl.Monitor.Type,
+							Interval:  pl.Monitor.Interval,
+							Send:      pl.Monitor.Send,
+							Recv:      pl.Monitor.Recv,
+							Timeout:   pl.Monitor.Timeout,
+						})
+				} else {
+					monitors = append(monitors,
+						Monitor{
+							Name:      UniquePoolName + "_monitor",
+							Partition: "Common",
+							Type:      pl.Monitor.Type,
+							Interval:  pl.Monitor.Interval,
+							Timeout:   pl.Monitor.Timeout,
+						})
+				}
+				pool.Monitors = monitors
+			}
+			wip.Pools = append(wip.Pools, pool)
+		}
+		if _, ok := ctlr.resources.bigIpMap[bigipConfig].gtmConfig[DEFAULT_GTM_PARTITION]; !ok {
+			ctlr.resources.bigIpMap[bigipConfig].gtmConfig[DEFAULT_GTM_PARTITION] = GTMPartitionConfig{
+				WideIPs: make(map[string]WideIP),
+			}
+		}
+
+		ctlr.resources.bigIpMap[bigipConfig].gtmConfig[DEFAULT_GTM_PARTITION].WideIPs[wip.DomainName] = wip
+	}
 	return
 }
 
@@ -3194,9 +3206,12 @@ func (ctlr *Controller) processIngressLink(
 		}
 		ip = ingLink.Spec.VirtualServerAddress
 	}
+	// TODO: phase2 get bigipLabel from cr resource or service address cr
+	// Phase1 setting bigipLabel to empty string
+	bigipLabel := BigIPLabel
 	if isILDeleted {
 		var delRes []string
-		rsMap := ctlr.resources.getPartitionResourceMap(partition)
+		rsMap := ctlr.resources.getPartitionResourceMap(partition, bigipLabel)
 		for k := range rsMap {
 			rsName := "ingress_link_" + formatVirtualServerName(
 				ip,
@@ -3209,12 +3224,12 @@ func (ctlr *Controller) processIngressLink(
 		for _, rsName := range delRes {
 			var hostnames []string
 			if rsMap[rsName] != nil {
-				rsCfg, err := ctlr.resources.getResourceConfig(partition, rsName)
+				rsCfg, err := ctlr.resources.getResourceConfig(partition, rsName, bigipLabel)
 				if err == nil {
 					hostnames = rsCfg.MetaData.hosts
 				}
 			}
-			ctlr.deleteVirtualServer(partition, rsName)
+			ctlr.deleteVirtualServer(partition, rsName, bigipLabel)
 			if len(hostnames) > 0 {
 				ctlr.ProcessAssociatedExternalDNS(hostnames)
 			}
@@ -3248,7 +3263,7 @@ func (ctlr *Controller) processIngressLink(
 		}
 	}
 
-	rsMap := ctlr.resources.getPartitionResourceMap(partition)
+	rsMap := ctlr.resources.getPartitionResourceMap(partition, bigipLabel)
 	for _, port := range svc.Spec.Ports {
 		//for nginx health monitor port skip vs creation
 		if port.Port == nginxMonitorPort {
@@ -3299,7 +3314,7 @@ func (ctlr *Controller) processIngressLink(
 			kind:      IngressLink,
 		}
 		// updating the service cache
-		ctlr.updateMultiClusterResourceServiceMap(rsCfg, rsRef, svc.ObjectMeta.Name, "", pool, svcPort, "")
+		ctlr.updateMultiClusterResourceServiceMap(rsCfg, rsRef, svc.ObjectMeta.Name, "", pool, svcPort, "", bigipLabel)
 		// Update the pool Members
 		ctlr.updatePoolMembersForResources(&pool)
 		if len(pool.Members) > 0 {
@@ -4247,7 +4262,8 @@ func (ctlr *Controller) handleBigipConfigUpdates(config []cisapiv1.BigIpConfig) 
 				// start agent
 				ctlr.startAgent(newConfig)
 				//update bigipMap with new bigipconfig
-				ctlr.bigIpMap[newConfig] = BigIpResourceConfig{}
+				ctlr.bigIpMap[newConfig] = BigIpResourceConfig{ltmConfig: make(LTMConfig), gtmConfig: make(GTMConfig)}
+				ctlr.resources.bigIpMap[newConfig] = BigIpResourceConfig{ltmConfig: make(LTMConfig), gtmConfig: make(GTMConfig)}
 			}
 		}
 	}
@@ -4291,4 +4307,20 @@ func (ctlr *Controller) getPartitionForBIGIP(bigipLabel string) string {
 		}
 	}
 	return ""
+}
+
+func (ctlr *Controller) getBIGIPConfig(bigipLabel string) cisapiv1.BigIpConfig {
+	//get partition from bigip
+	for bigipconfig, _ := range ctlr.bigIpMap {
+		//TODO: get bigipLabel from route resource or service address cr and get parition from specific bigip agent
+		//Phase1 getting partition from bigipconfig index 0
+		if bigipLabel == "" {
+			return bigipconfig
+		} else {
+			if bigipconfig.BigIpLabel == bigipLabel {
+				return bigipconfig
+			}
+		}
+	}
+	return cisapiv1.BigIpConfig{}
 }

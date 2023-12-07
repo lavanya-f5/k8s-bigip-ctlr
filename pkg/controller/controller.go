@@ -64,6 +64,7 @@ func NewController(params Params) *Controller {
 		clusterRatio:          make(map[string]*int),
 		clusterAdminState:     make(map[string]cisapiv1.AdminState),
 		AgentMap:              make(map[string]*Agent),
+		bigIpMap:              make(BigIpMap),
 		CMTokenManager: tokenmanager.NewTokenManager(
 			params.CMConfigDetails.URL,
 			tokenmanager.Credentials{Username: params.CMConfigDetails.UserName, Password: params.CMConfigDetails.Password},

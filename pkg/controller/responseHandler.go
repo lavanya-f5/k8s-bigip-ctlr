@@ -50,7 +50,10 @@ func (ctlr *Controller) responseHandler(respChan chan resourceStatusMeta) {
 			// Priority tenant doesn't have any meta
 			if _, found := rscUpdateMeta.failedTenants[partition]; !found && len(meta) == 0 {
 				// updating the tenant priority back to zero if it's not in failed tenants
-				ctlr.resources.updatePartitionPriority(partition, 0)
+				////TODO: get bigipLabel from cr resource or service address cr resource
+				//	//Phase1 setting bigipLabel to default
+				bigipLabel := BigIPLabel
+				ctlr.resources.updatePartitionPriority(partition, 0, bigipLabel)
 				continue
 			}
 			for rscKey, kind := range meta {

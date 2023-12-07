@@ -54,10 +54,8 @@ func newMultiClusterResourceStore() *MultiClusterResourceStore {
 
 // Init is Receiver to initialize the object.
 func (rs *ResourceStore) Init() {
-	rs.ltmConfig = make(LTMConfig)
-	rs.ltmConfigCache = make(LTMConfig)
-	rs.gtmConfig = make(GTMConfig)
-	rs.gtmConfigCache = make(GTMConfig)
+	rs.bigIpMap = make(BigIpMap)
+	rs.bigIpMapCache = make(BigIpMap)
 	rs.poolMemCache = make(PoolMemberCache)
 	rs.nplStore = make(NPLStore)
 	rs.extdSpecMap = make(extendedSpecMap)
@@ -456,6 +454,9 @@ func (ctlr *Controller) prepareRSConfigFromVirtualServer(
 		namespace: vs.Namespace,
 		kind:      VirtualServer,
 	}
+	// TODO: phase2 get bigipLabel from cr resource or service address cr
+	// Phase1 setting bigipLabel to empty string
+	bigipLabel := BigIPLabel
 	framedPools := make(map[string]struct{})
 	for _, pl := range vs.Spec.Pools {
 		//Fetch service backends with weights for pool
@@ -518,23 +519,23 @@ func (ctlr *Controller) prepareRSConfigFromVirtualServer(
 					if svcs, ok := ctlr.multiClusterResources.rscSvcMap[rsRef]; ok {
 						for svc, config := range svcs {
 							// update the clusterSvcMap
-							ctlr.updatePoolIdentifierForService(svc, rsRef, config.svcPort, pool.Name, pool.Partition, rsCfg.Virtual.Name, pl.Path)
+							ctlr.updatePoolIdentifierForService(svc, rsRef, config.svcPort, pool.Name, pool.Partition, rsCfg.Virtual.Name, pl.Path, bigipLabel)
 						}
 					}
 					pool.MultiClusterServices = pl.MultiClusterServices
 					// update the multicluster resource serviceMap with local cluster services
-					ctlr.updateMultiClusterResourceServiceMap(rsCfg, rsRef, pl.Service, pl.Path, pool, pl.ServicePort, "")
+					ctlr.updateMultiClusterResourceServiceMap(rsCfg, rsRef, pl.Service, pl.Path, pool, pl.ServicePort, "", bigipLabel)
 					// update the multicluster resource serviceMap with HA pair cluster services
 					if ctlr.haModeType == Active && ctlr.multiClusterConfigs.HAPairClusterName != "" {
 						ctlr.updateMultiClusterResourceServiceMap(rsCfg, rsRef, pl.Service, pl.Path, pool, pl.ServicePort,
-							ctlr.multiClusterConfigs.HAPairClusterName)
+							ctlr.multiClusterConfigs.HAPairClusterName, bigipLabel)
 					}
 				} else {
 					// Update the multiCluster resource service map for each pool which constitutes a service in case of ratio mode
-					ctlr.updateMultiClusterResourceServiceMap(rsCfg, rsRef, SvcBackend.Name, pl.Path, pool, pl.ServicePort, SvcBackend.Cluster)
+					ctlr.updateMultiClusterResourceServiceMap(rsCfg, rsRef, SvcBackend.Name, pl.Path, pool, pl.ServicePort, SvcBackend.Cluster, bigipLabel)
 				}
 			} else {
-				ctlr.updateMultiClusterResourceServiceMap(rsCfg, rsRef, pl.Service, pl.Path, pool, pl.ServicePort, "")
+				ctlr.updateMultiClusterResourceServiceMap(rsCfg, rsRef, pl.Service, pl.Path, pool, pl.ServicePort, "", bigipLabel)
 			}
 			// Update the pool Members
 			ctlr.updatePoolMembersForResources(&pool)
@@ -780,6 +781,9 @@ func (ctlr *Controller) handleDefaultPool(
 	if rsCfg.MetaData.Protocol == HTTP && len(vs.Spec.TLSProfileName) > 0 && (vs.Spec.HTTPTraffic == TLSRedirectInsecure || vs.Spec.HTTPTraffic == TLSNoInsecure) {
 		return
 	}
+	// TODO: phase2 get bigipLabel from cr resource or service address cr
+	// Phase1 setting bigipLabel to empty string
+	bigipLabel := BigIPLabel
 	if !reflect.DeepEqual(vs.Spec.DefaultPool, cisapiv1.DefaultPool{}) {
 		if vs.Spec.DefaultPool.Reference == BIGIP && vs.Spec.DefaultPool.Name != "" {
 			rsCfg.Virtual.PoolName = vs.Spec.DefaultPool.Name
@@ -835,7 +839,7 @@ func (ctlr *Controller) handleDefaultPool(
 					}
 				}
 			}
-			ctlr.updateMultiClusterResourceServiceMap(rsCfg, rsRef, vs.Spec.DefaultPool.Service, "", pool, vs.Spec.DefaultPool.ServicePort, "")
+			ctlr.updateMultiClusterResourceServiceMap(rsCfg, rsRef, vs.Spec.DefaultPool.Service, "", pool, vs.Spec.DefaultPool.ServicePort, "", bigipLabel)
 			// Update the pool Members
 			ctlr.updatePoolMembersForResources(&pool)
 			rsCfg.Pools = append(rsCfg.Pools, pool)
@@ -1354,29 +1358,31 @@ func (rc *ResourceConfig) FindPolicy(controlType string) *Policy {
 	return nil
 }
 
-func (rs *ResourceStore) getPartitionResourceMap(partition string) ResourceMap {
-	_, ok := rs.ltmConfig[partition]
+func (rs *ResourceStore) getPartitionResourceMap(partition string, bigipLabel string) ResourceMap {
+	rsConfig := rs.getBigIpResourceConfig(bigipLabel)
+	_, ok := rsConfig.ltmConfig[partition]
 	if !ok {
 		zero := 0
-		rs.ltmConfig[partition] = &PartitionConfig{ResourceMap: make(ResourceMap), Priority: &zero}
+		rsConfig.ltmConfig[partition] = &PartitionConfig{ResourceMap: make(ResourceMap), Priority: &zero}
 	}
 
-	return rs.ltmConfig[partition].ResourceMap
+	return rsConfig.ltmConfig[partition].ResourceMap
 }
 
-func (rs *ResourceStore) getLTMPartitions() []string {
+func (rs *ResourceStore) getLTMPartitions(bigipLabel string) []string {
+	rsConfig := rs.getBigIpResourceConfig(bigipLabel)
 	var partitions []string
 
-	for partition, _ := range rs.ltmConfig {
+	for partition, _ := range rsConfig.ltmConfig {
 		partitions = append(partitions, partition)
 	}
 	return partitions
 }
 
 // getResourceConfig gets a specific Resource cfg
-func (rs *ResourceStore) getResourceConfig(partition, name string) (*ResourceConfig, error) {
-
-	rsMap, ok := rs.ltmConfig[partition]
+func (rs *ResourceStore) getResourceConfig(partition, name string, bigipLabel string) (*ResourceConfig, error) {
+	rsConfig := rs.getBigIpResourceConfig(bigipLabel)
+	rsMap, ok := rsConfig.ltmConfig[partition]
 	if !ok {
 		return nil, fmt.Errorf("partition not available")
 	}
@@ -1386,20 +1392,24 @@ func (rs *ResourceStore) getResourceConfig(partition, name string) (*ResourceCon
 	return nil, fmt.Errorf("resource not available")
 }
 
-func (rs *ResourceStore) setResourceConfig(partition, name string, rsCfg *ResourceConfig) error {
-	partitionConfig, ok := rs.ltmConfig[partition]
-	if !ok {
-		return fmt.Errorf("partition not available")
+func (rs *ResourceStore) setResourceConfig(partition, name string, rsCfg *ResourceConfig, bigipLabel string) error {
+	bigip := rs.getBigIpKey(bigipLabel)
+	if bigip != (cisapiv1.BigIpConfig{}) {
+		partitionConfig, ok := rs.bigIpMap[bigip].ltmConfig[partition]
+		if !ok {
+			return fmt.Errorf("partition not available")
+		}
+		partitionConfig.ResourceMap[name] = rsCfg
 	}
-	partitionConfig.ResourceMap[name] = rsCfg
 	return nil
 }
 
 // getSanitizedLTMConfigCopy is a Resource reference copy of LTMConfig
-func (rs *ResourceStore) getSanitizedLTMConfigCopy() LTMConfig {
+func (rs *ResourceStore) getSanitizedLTMConfigCopy(bigipLabel string) LTMConfig {
+	bigip := rs.getBigIpKey(bigipLabel)
 	ltmConfig := make(LTMConfig)
 	var deletePartitions []string
-	for prtn, partitionConfig := range rs.ltmConfig {
+	for prtn, partitionConfig := range rs.bigIpMap[bigip].ltmConfig {
 		// copy only those partitions where virtual server exists otherwise remove from ltmConfig
 		if len(partitionConfig.ResourceMap) > 0 {
 			ltmConfig[prtn] = &PartitionConfig{ResourceMap: make(ResourceMap), Priority: partitionConfig.Priority}
@@ -1417,15 +1427,16 @@ func (rs *ResourceStore) getSanitizedLTMConfigCopy() LTMConfig {
 	}
 	// delete the partitions if there are no virtuals in that partition
 	for _, prtn := range deletePartitions {
-		delete(rs.ltmConfig, prtn)
+		delete(rs.bigIpMap[bigip].ltmConfig, prtn)
 	}
 	return ltmConfig
 }
 
 // getLTMConfigDeepCopy is a Resource reference copy of LTMConfig
-func (rs *ResourceStore) getLTMConfigDeepCopy() LTMConfig {
+func (rs *ResourceStore) getLTMConfigDeepCopy(bigipLabel string) LTMConfig {
+	bigip := rs.getBigIpKey(bigipLabel)
 	ltmConfig := make(LTMConfig)
-	for prtn, partitionConfig := range rs.ltmConfig {
+	for prtn, partitionConfig := range rs.bigIpMap[bigip].ltmConfig {
 		partitionConfig.PriorityMutex.RLock()
 		ltmConfig[prtn] = &PartitionConfig{ResourceMap: make(ResourceMap), Priority: partitionConfig.Priority}
 		partitionConfig.PriorityMutex.RUnlock()
@@ -1439,9 +1450,10 @@ func (rs *ResourceStore) getLTMConfigDeepCopy() LTMConfig {
 }
 
 // getGTMConfigCopy is a WideIP reference copy of GTMConfig
-func (rs *ResourceStore) getGTMConfigCopy() GTMConfig {
+func (rs *ResourceStore) getGTMConfigCopy(bigipLabel string) GTMConfig {
+	bigip := rs.getBigIpKey(bigipLabel)
 	gtmConfig := make(GTMConfig)
-	for partition, gtmPartitionConfig := range rs.gtmConfig {
+	for partition, gtmPartitionConfig := range rs.bigIpMap[bigip].gtmConfig {
 		gtmConfig[partition] = GTMPartitionConfig{
 			WideIPs: make(map[string]WideIP),
 		}
@@ -1455,26 +1467,37 @@ func (rs *ResourceStore) getGTMConfigCopy() GTMConfig {
 
 func (rs *ResourceStore) updateCaches() {
 	// No need to deep copy as each RsCfg will be framed in a fresh memory block while creating live ltmConfig
-	rs.ltmConfigCache = rs.getSanitizedLTMConfigCopy()
-	rs.gtmConfigCache = rs.getGTMConfigCopy()
+	for bigip, _ := range rs.bigIpMap {
+		rs.updateCache(bigip.BigIpLabel)
+	}
+}
+
+func (rs *ResourceStore) updateCache(bigipLabel string) {
+	bigIp := rs.getBigIpKey(bigipLabel)
+	ltmConfigcache := rs.getSanitizedLTMConfigCopy(bigipLabel)
+	gtmConfigcache := rs.getGTMConfigCopy(bigipLabel)
+	rs.bigIpMapCache[bigIp] = BigIpResourceConfig{
+		ltmConfig: ltmConfigcache,
+		gtmConfig: gtmConfigcache,
+	}
 }
 
 func (rs *ResourceStore) isConfigUpdated() bool {
-	return !reflect.DeepEqual(rs.ltmConfig, rs.ltmConfigCache) ||
-		!reflect.DeepEqual(rs.gtmConfig, rs.gtmConfigCache)
+	return !reflect.DeepEqual(rs.bigIpMap, rs.bigIpMapCache)
 }
 
 // Deletes respective VirtualServer resource configuration from  ResourceStore
-func (rs *ResourceStore) deleteVirtualServer(partition, rsName string) {
-	delete(rs.getPartitionResourceMap(partition), rsName)
+func (rs *ResourceStore) deleteVirtualServer(partition, rsName string, bigipLabel string) {
+	delete(rs.getPartitionResourceMap(partition, bigipLabel), rsName)
 }
 
 // Update the tenant priority in ltmConfigCache
-func (rs *ResourceStore) updatePartitionPriority(partition string, priority int) {
-	if _, ok := rs.ltmConfig[partition]; ok {
-		rs.ltmConfig[partition].PriorityMutex.Lock()
-		*rs.ltmConfig[partition].Priority = priority
-		rs.ltmConfig[partition].PriorityMutex.Unlock()
+func (rs *ResourceStore) updatePartitionPriority(partition string, priority int, bigipLabel string) {
+	bigip := rs.getBigIpKey(bigipLabel)
+	if _, ok := rs.bigIpMap[bigip].ltmConfig[partition]; ok {
+		rs.bigIpMap[bigip].ltmConfig[partition].PriorityMutex.Lock()
+		*rs.bigIpMap[bigip].ltmConfig[partition].Priority = priority
+		rs.bigIpMap[bigip].ltmConfig[partition].PriorityMutex.Unlock()
 	}
 }
 
@@ -1838,12 +1861,12 @@ func (ctlr *Controller) HandlePathBasedABIRule(
 	}
 }
 
-func (ctlr *Controller) deleteVirtualServer(partition, rsName string) {
-	ctlr.resources.deleteVirtualServer(partition, rsName)
+func (ctlr *Controller) deleteVirtualServer(partition, rsName string, bigipLabel string) {
+	ctlr.resources.deleteVirtualServer(partition, rsName, bigipLabel)
 }
 
-func (ctlr *Controller) getVirtualServer(partition, rsName string) *ResourceConfig {
-	res, _ := ctlr.resources.getResourceConfig(partition, rsName)
+func (ctlr *Controller) getVirtualServer(partition, rsName string, bigipLabel string) *ResourceConfig {
+	res, _ := ctlr.resources.getResourceConfig(partition, rsName, bigipLabel)
 	return res
 }
 
@@ -1887,8 +1910,11 @@ func (ctlr *Controller) prepareRSConfigFromTransportServer(
 		namespace: vs.Namespace,
 		kind:      TransportServer,
 	}
+	// TODO: phase2 get bigipLabel from cr resource or service address cr
+	// Phase1 setting bigipLabel to empty string
+	bigipLabel := BigIPLabel
 	// update the pool identifier for service
-	ctlr.updatePoolIdentifierForService(svcKey, rsRef, vs.Spec.Pool.ServicePort, pool.Name, pool.Partition, rsCfg.Virtual.Name, "")
+	ctlr.updatePoolIdentifierForService(svcKey, rsRef, vs.Spec.Pool.ServicePort, pool.Name, pool.Partition, rsCfg.Virtual.Name, "", bigipLabel)
 
 	if ctlr.multiClusterMode != "" {
 		//check for external service reference
@@ -1910,19 +1936,19 @@ func (ctlr *Controller) prepareRSConfigFromTransportServer(
 					ServicePort: config.svcPort,
 				})
 				// update the clusterSvcMap
-				ctlr.updatePoolIdentifierForService(svc, rsRef, config.svcPort, pool.Name, pool.Partition, rsCfg.Virtual.Name, "")
+				ctlr.updatePoolIdentifierForService(svc, rsRef, config.svcPort, pool.Name, pool.Partition, rsCfg.Virtual.Name, "", bigipLabel)
 			}
 			pool.MultiClusterServices = multiClusterServices
 		}
 		// update the multicluster resource serviceMap with local cluster services
-		ctlr.updateMultiClusterResourceServiceMap(rsCfg, rsRef, vs.Spec.Pool.Service, vs.Spec.Pool.Path, pool, vs.Spec.Pool.ServicePort, "")
+		ctlr.updateMultiClusterResourceServiceMap(rsCfg, rsRef, vs.Spec.Pool.Service, vs.Spec.Pool.Path, pool, vs.Spec.Pool.ServicePort, "", bigipLabel)
 		// update the multicluster resource serviceMap with HA pair cluster services
 		if ctlr.haModeType == Active && ctlr.multiClusterConfigs.HAPairClusterName != "" {
 			ctlr.updateMultiClusterResourceServiceMap(rsCfg, rsRef, vs.Spec.Pool.Service, "", pool, vs.Spec.Pool.ServicePort,
-				ctlr.multiClusterConfigs.HAPairClusterName)
+				ctlr.multiClusterConfigs.HAPairClusterName, bigipLabel)
 		}
 	} else {
-		ctlr.updateMultiClusterResourceServiceMap(rsCfg, rsRef, vs.Spec.Pool.Service, vs.Spec.Pool.Path, pool, vs.Spec.Pool.ServicePort, "")
+		ctlr.updateMultiClusterResourceServiceMap(rsCfg, rsRef, vs.Spec.Pool.Service, vs.Spec.Pool.Path, pool, vs.Spec.Pool.ServicePort, "", bigipLabel)
 	}
 	// Update the pool Members
 	ctlr.updatePoolMembersForResources(&pool)
@@ -2005,6 +2031,7 @@ func (ctlr *Controller) prepareRSConfigFromLBService(
 	rsCfg *ResourceConfig,
 	svc *v1.Service,
 	svcPort v1.ServicePort,
+	bigipLabel string,
 ) error {
 	poolName := ctlr.formatPoolName(
 		svc.Namespace,
@@ -2030,7 +2057,7 @@ func (ctlr *Controller) prepareRSConfigFromLBService(
 		kind:      Service,
 	}
 	// update the pool identifier for service
-	ctlr.updatePoolIdentifierForService(svcKey, rsRef, pool.ServicePort, pool.Name, pool.Partition, rsCfg.Virtual.Name, "")
+	ctlr.updatePoolIdentifierForService(svcKey, rsRef, pool.ServicePort, pool.Name, pool.Partition, rsCfg.Virtual.Name, "", bigipLabel)
 	// Update the pool Members
 	ctlr.updatePoolMembersForResources(&pool)
 	if len(pool.Members) > 0 {
@@ -2069,7 +2096,7 @@ func (ctlr *Controller) prepareRSConfigFromLBService(
 		rsCfg.Virtual.SNAT = DEFAULT_SNAT
 	}
 	// update the multicluster resource serviceMap with local cluster services
-	ctlr.updateMultiClusterResourceServiceMap(rsCfg, rsRef, svc.Name, "", pool, pool.ServicePort, "")
+	ctlr.updateMultiClusterResourceServiceMap(rsCfg, rsRef, svc.Name, "", pool, pool.ServicePort, "", bigipLabel)
 
 	return nil
 }
@@ -2765,4 +2792,34 @@ func ParseRewriteAction(targetUrlPath, valueUrlPath string) string {
 		action = fmt.Sprintf("tcl:[regsub %s [HTTP::uri] %s ]", targetUrlPath, valueUrlPath)
 	}
 	return action
+}
+
+func (rs *ResourceStore) getBigIpResourceConfig(bigipLabel string) BigIpResourceConfig {
+	for bigIp, rsCfg := range rs.bigIpMap {
+		//Phase1 getting bigipconfig from index 0 if bigipLabel is not specified
+		if bigipLabel == "" {
+			return rsCfg
+		} else {
+			if bigIp.BigIpLabel == bigipLabel {
+				return rsCfg
+			}
+		}
+	}
+	log.Debugf("No BigIpResourceConfig found for bigipLabel: %s", bigipLabel)
+	return BigIpResourceConfig{}
+}
+
+func (rs *ResourceStore) getBigIpKey(bigipLabel string) cisapiv1.BigIpConfig {
+	for bigIp, _ := range rs.bigIpMap {
+		//For phase1 getting bigipconfig from index 0 if bigipLabel is not specified
+		if bigipLabel == "" {
+			return bigIp
+		} else {
+			if bigIp.BigIpLabel == bigipLabel {
+				return bigIp
+			}
+		}
+	}
+	log.Debugf("No BigIpConfig found for bigipLabel: %s", bigipLabel)
+	return cisapiv1.BigIpConfig{}
 }

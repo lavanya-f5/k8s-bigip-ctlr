@@ -44,6 +44,7 @@ func newMockController() *mockController {
 		Controller: &Controller{
 			resourceSelectorConfig: ResourceSelectorConfig{},
 			AgentMap:               make(map[string]*Agent),
+			bigIpMap:               make(BigIpMap),
 			AgentParams:            AgentParams{},
 			clientsets:             &ClientSets{},
 			managedResources:       ManagedResources{ManageVirtualServer: true, ManageIL: true, ManageEDNS: true, ManageTransportServer: true, ManageTLSProfile: true, ManageSecrets: true},
