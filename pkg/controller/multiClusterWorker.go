@@ -199,3 +199,14 @@ func (ctlr *Controller) getSvcFromHACluster(svcNameSpace, svcName string) (inter
 			ctlr.multiClusterConfigs.HAPairClusterName, svcNameSpace)
 	}
 }
+
+func (ctlr *Controller) startInfomersForClusterReferencedSvcs(clusterName string) {
+	ctlr.multiClusterResources.Lock()
+	defer ctlr.multiClusterResources.Unlock()
+	if _, ok := ctlr.multiClusterResources.clusterSvcMap[clusterName]; ok {
+		svcMap := ctlr.multiClusterResources.clusterSvcMap[clusterName]
+		for svcKey, _ := range svcMap {
+			ctlr.setupAndStartMultiClusterInformers(svcKey, true)
+		}
+	}
+}

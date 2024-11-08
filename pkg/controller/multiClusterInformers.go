@@ -175,34 +175,34 @@ func (ctlr *Controller) addMultiClusterPoolEventHandlers(poolInf *CommonInformer
 
 // whenever global configmap is modified check for removed cluster configs
 // if any of the cluster config is removed from global CM. stop the respective cluster informers
-func (ctlr *Controller) stopDeletedGlobalCMMultiClusterInformers() error {
+func (ctlr *Controller) stopDeletedGlobalCMMultiClusterInformers(primaryClusterName string, secondaryClusterName string, externalClusterConfigs []ClusterDetails) error {
 
 	if ctlr.multiClusterConfigs == nil {
 		return nil
 	}
 	ctlr.multiClusterConfigs.Lock()
 	// remove the  pool informers for clusters whose config has been removed
-	for clusterName, InfSet := range ctlr.multiClusterConfigs.ClusterConfigs {
+out:
+	for clustername, _ := range ctlr.multiClusterConfigs.ClusterConfigs {
+		//Avoid deleting HA cluster config
+		// Avoid deleting HA cluster related configs
+		if clustername == primaryClusterName || clustername == secondaryClusterName || clustername == "" {
+			continue
+		}
 		// if cluster config not present in global CM remove the informer
-		if config, ok := ctlr.multiClusterConfigs.ClusterConfigs[clusterName]; !ok {
-			for ns, nsPoolInf := range InfSet.comInformers {
-				nsPoolInf.stop()
-				delete(ctlr.multiClusterConfigs.ClusterConfigs[clusterName].comInformers, ns)
-			}
-		} else {
-			// delete informers for cluster if serviceTypeLBDiscovery is disabled in default mode
-			if ctlr.discoveryMode == DefaultMode && !config.clusterDetails.ServiceTypeLBDiscovery {
-				//for HA pair dont remove pool informers.
-				if clusterName == ctlr.multiClusterConfigs.HAPairClusterName || clusterName == ctlr.multiClusterConfigs.LocalClusterName || clusterName == "" {
-					continue
-				} else {
-					for ns, nsPoolInf := range InfSet.comInformers {
-						nsPoolInf.stop()
-						delete(ctlr.multiClusterConfigs.ClusterConfigs[clusterName].comInformers, ns)
-					}
+		for _, externalclusterConfig := range externalClusterConfigs {
+			if clustername == externalclusterConfig.ClusterName {
+				//check if serviceTypeLBDiscovery disabled.
+				// delete informers for cluster if serviceTypeLBDiscovery is disabled in default mode
+				if ctlr.discoveryMode == DefaultMode && !externalclusterConfig.ServiceTypeLBDiscovery {
+					ctlr.stopMultiClusterInformers(clustername, true)
 				}
+				//skip deleting the cluster informers
+				goto out
 			}
 		}
+		//stop informers for cluster if not found in externalClusterConfig
+		ctlr.stopMultiClusterInformers(clustername, true)
 	}
 	ctlr.multiClusterConfigs.Unlock()
 

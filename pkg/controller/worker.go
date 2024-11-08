@@ -354,6 +354,15 @@ func (ctlr *Controller) processResources() bool {
 			if err != nil {
 				log.Warningf(err.Error())
 			}
+			if !ctlr.initState && rKey.event == Create {
+				if mcc.ServiceTypeLBDiscovery || mcc.ClusterName == ctlr.multiClusterConfigs.LocalClusterName {
+					//start all informers for the cluster
+					ctlr.setupAndStartExternalClusterInformers(mcc.ClusterName)
+				} else {
+					//check cluster svc map to start required  namespace informers for cluster
+					ctlr.startInfomersForClusterReferencedSvcs(mcc.ClusterName)
+				}
+			}
 			break
 		}
 		switch ctlr.mode {
@@ -4809,7 +4818,6 @@ func (ctlr *Controller) processConfigMap(cm *v1.ConfigMap, isDelete bool) (error
 		// Read multi-cluster config from extended CM
 		err := ctlr.readMultiClusterConfigFromGlobalCM(es.HAClusterConfig, es.ExternalClustersConfig)
 		ctlr.checkSecondaryCISConfig()
-		ctlr.stopDeletedGlobalCMMultiClusterInformers()
 		if err != nil {
 			return err, false
 		}

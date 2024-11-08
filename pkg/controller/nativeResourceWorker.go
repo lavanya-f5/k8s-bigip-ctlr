@@ -2104,6 +2104,8 @@ func (ctlr *Controller) readMultiClusterConfigFromGlobalCM(haClusterConfig HAClu
 	// If externalClustersConfig is not specified, then clean up any old external cluster related config in case user had
 	// specified externalClusterConfigs earlier and now removed those configs
 	if externalClusterConfigs == nil || len(externalClusterConfigs) == 0 {
+		//stop the informers
+		ctlr.stopDeletedGlobalCMMultiClusterInformers(primaryClusterName, secondaryClusterName, externalClusterConfigs)
 		// Clean up the clusterConfigs
 		ctlr.multiClusterConfigs.cleanClusterCache(primaryClusterName, secondaryClusterName, currentClusterSecretKeys)
 		for clusterName := range ctlr.clusterRatio {
@@ -2207,6 +2209,8 @@ func (ctlr *Controller) readMultiClusterConfigFromGlobalCM(haClusterConfig HAClu
 			}
 		}
 	}
+	// Stop informers for cluster not present in external config
+	ctlr.stopDeletedGlobalCMMultiClusterInformers(primaryClusterName, secondaryClusterName, externalClusterConfigs)
 	// Check if a cluster config has been removed then remove the data associated with it from the externalClustersConfig store
 	ctlr.multiClusterConfigs.cleanClusterCache(primaryClusterName, secondaryClusterName, currentClusterSecretKeys)
 	return nil
@@ -2219,7 +2223,8 @@ func (ctlr *Controller) updateClusterConfigStore(kubeConfigSecret *v1.Secret, mc
 	}
 	// if secret associated with a cluster kubeconfig is deleted then remove it from clusterKubeConfig store
 	if deleted {
-		// Delete kubeclients from multicluster config store
+		// stop informers for cluster
+		ctlr.stopMultiClusterInformers(mcc.ClusterName, true)
 		ctlr.multiClusterConfigs.deleteClusterConfig(mcc.ClusterName)
 		return nil
 	}
