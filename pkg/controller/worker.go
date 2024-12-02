@@ -564,6 +564,24 @@ func (ctlr *Controller) processResources() bool {
 			log.Debugf("%v", err)
 		}
 
+		newPool := false
+		if ctlr.discoveryMode == Ratio && svcKey.clusterName != ctlr.multiClusterHandler.LocalClusterName && (rKey.event == Create || rKey.event == Delete) {
+			if _, ok := ctlr.resources.poolMemCache[svcKey]; !ok {
+				parentSvcKey := svcKey
+				parentSvcKey.clusterName = ctlr.multiClusterHandler.LocalClusterName
+				if _, parentOk := ctlr.resources.poolMemCache[parentSvcKey]; parentOk {
+					ctlr.resources.poolMemCache[svcKey] = &poolMembersInfo{
+						memberMap: make(map[portRef][]PoolMember),
+					}
+					svcKey.clusterName = ctlr.multiClusterHandler.LocalClusterName
+					newPool = true
+				}
+			} else if rKey.event == Delete {
+				svcKey.clusterName = ctlr.multiClusterHandler.LocalClusterName
+				newPool = true
+			}
+		}
+
 		// Don't process the service as it's not used by any resource
 		if _, ok := ctlr.resources.poolMemCache[svcKey]; !ok {
 			log.Debugf("Skipping service '%v' as it's not used by any CIS monitored resource", svcKey)
@@ -573,7 +591,7 @@ func (ctlr *Controller) processResources() bool {
 		_ = ctlr.processService(svc, rKey.clusterName)
 
 		// Update the poolMembers for affected resources
-		ctlr.updatePoolMembersForService(svcKey, rKey.svcPortUpdated)
+		ctlr.updatePoolMembersForService(svcKey, rKey.svcPortUpdated, newPool)
 
 	case Endpoints:
 		ep := rKey.rsc.(*v1.Endpoints)
@@ -605,7 +623,7 @@ func (ctlr *Controller) processResources() bool {
 			log.Debugf("%v", err)
 		}
 		// Just update the endpoints instead of processing them entirely
-		ctlr.updatePoolMembersForService(svcKey, false)
+		ctlr.updatePoolMembersForService(svcKey, false, false)
 
 	case Pod:
 		pod := rKey.rsc.(*v1.Pod)
@@ -635,7 +653,7 @@ func (ctlr *Controller) processResources() bool {
 			break
 		}
 		// Update the poolMembers for affected resources
-		ctlr.updatePoolMembersForService(svcKey, false)
+		ctlr.updatePoolMembersForService(svcKey, false, false)
 
 		if ctlr.mode == OpenShiftMode && rscDelete == false && ctlr.resources.baseRouteConfig.AutoMonitor != None {
 			ctlr.UpdatePoolHealthMonitors(svcKey)
@@ -757,7 +775,7 @@ func (ctlr *Controller) processResources() bool {
 		if &ctlr.multiClusterResources.clusterSvcMap != nil {
 			if svcKeys, ok := ctlr.multiClusterResources.clusterSvcMap[rKey.clusterName]; ok {
 				for svcKey := range svcKeys {
-					ctlr.updatePoolMembersForService(svcKey, false)
+					ctlr.updatePoolMembersForService(svcKey, false, false)
 				}
 			}
 		}
@@ -2230,7 +2248,7 @@ func (ctlr *Controller) updatePoolIdentifierForService(key MultiClusterServiceKe
 	ctlr.multiClusterResources.clusterSvcMap[key.clusterName][key][multiClusterSvcConfig][poolId] = struct{}{}
 }
 
-func (ctlr *Controller) updatePoolMembersForService(svcKey MultiClusterServiceKey, svcPortUpdated bool) {
+func (ctlr *Controller) updatePoolMembersForService(svcKey MultiClusterServiceKey, svcPortUpdated, newPool bool) {
 	if serviceKey, ok := ctlr.multiClusterResources.clusterSvcMap[svcKey.clusterName]; ok {
 		if svcPorts, ok2 := serviceKey[svcKey]; ok2 {
 			for _, poolIds := range svcPorts {
@@ -2300,14 +2318,16 @@ func (ctlr *Controller) updatePoolMembersForService(svcKey MultiClusterServiceKe
 							freshRsCfg.Pools[index] = pool
 						}
 					}
-					freshRsCfg.MetaData.Active = false
-					for _, pool := range freshRsCfg.Pools {
-						if len(pool.Members) > 0 {
-							freshRsCfg.MetaData.Active = true
-							break
+					if !newPool {
+						freshRsCfg.MetaData.Active = false
+						for _, pool := range freshRsCfg.Pools {
+							if len(pool.Members) > 0 {
+								freshRsCfg.MetaData.Active = true
+								break
+							}
 						}
+						_ = ctlr.resources.setResourceConfig(poolId.partition, poolId.rsName, freshRsCfg)
 					}
-					_ = ctlr.resources.setResourceConfig(poolId.partition, poolId.rsName, freshRsCfg)
 				}
 			}
 		}
