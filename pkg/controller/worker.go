@@ -414,15 +414,22 @@ func (ctlr *Controller) processResources() bool {
 				log.Warningf(err.Error())
 			}
 			if !ctlr.initState && rKey.event == Create {
-				//for external clusters
-				if mcc.ServiceTypeLBDiscovery || mcc.ClusterName == ctlr.multiClusterHandler.LocalClusterName {
+				if mcc.ClusterName == ctlr.multiClusterHandler.LocalClusterName {
 					//start all informers for the cluster
-					ctlr.setupAndStartExternalClusterInformers(mcc.ClusterName)
+					ctlr.StartInformers(mcc.ClusterName)
 				} else {
-					//check cluster svc map to start required  namespace informers for cluster
-					ctlr.startInfomersForClusterReferencedSvcs(mcc.ClusterName)
+					//for external clusters
+					if ctlr.discoveryMode != DefaultMode || (ctlr.discoveryMode == DefaultMode && mcc.ServiceTypeLBDiscovery) {
+						//start pool and node informers for the cluster
+						err := ctlr.setupAndStartExternalClusterInformers(mcc.ClusterName)
+						if err != nil {
+							log.Warningf(err.Error())
+						}
+					} else {
+						//check cluster svc map to start required  namespace informers for cluster
+						ctlr.startInfomersForClusterReferencedSvcs(mcc.ClusterName)
+					}
 				}
-
 			}
 			break
 		}

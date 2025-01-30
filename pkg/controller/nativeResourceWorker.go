@@ -1903,12 +1903,7 @@ func (ctlr *Controller) readMultiClusterConfigFromGlobalCM(haClusterConfig HAClu
 				log.Errorf("[MultiCluster]  %v", err.Error())
 				os.Exit(1)
 			}
-			err = ctlr.updateClusterConfigStore(kubeConfigSecret,
-				ClusterDetails{
-					ClusterName:            haClusterConfig.SecondaryCluster.ClusterName,
-					Secret:                 haClusterConfig.SecondaryCluster.Secret,
-					ServiceTypeLBDiscovery: haClusterConfig.SecondaryCluster.ServiceTypeLBDiscovery,
-				},
+			err = ctlr.updateClusterConfigStore(kubeConfigSecret, haClusterConfig.SecondaryCluster,
 				false)
 			if err != nil {
 				log.Errorf("[MultiCluster]  %v", err.Error())
@@ -1939,12 +1934,7 @@ func (ctlr *Controller) readMultiClusterConfigFromGlobalCM(haClusterConfig HAClu
 				log.Errorf("[MultiCluster]  %v", err.Error())
 				os.Exit(1)
 			}
-			err = ctlr.updateClusterConfigStore(kubeConfigSecret,
-				ClusterDetails{
-					ClusterName:            haClusterConfig.PrimaryCluster.ClusterName,
-					Secret:                 haClusterConfig.PrimaryCluster.Secret,
-					ServiceTypeLBDiscovery: haClusterConfig.SecondaryCluster.ServiceTypeLBDiscovery,
-				},
+			err = ctlr.updateClusterConfigStore(kubeConfigSecret, haClusterConfig.PrimaryCluster,
 				false)
 			if err != nil {
 				log.Errorf("[MultiCluster]  %v", err.Error())
@@ -1975,11 +1965,7 @@ func (ctlr *Controller) readMultiClusterConfigFromGlobalCM(haClusterConfig HAClu
 						os.Exit(1)
 					}
 					err = ctlr.updateClusterConfigStore(kubeConfigSecret,
-						ClusterDetails{
-							ClusterName:            config.ClusterName,
-							Secret:                 config.Secret,
-							ServiceTypeLBDiscovery: config.ServiceTypeLBDiscovery,
-						},
+						config,
 						false)
 					if err != nil {
 						log.Errorf("[MultiCluster]  %v", err.Error())
@@ -2126,9 +2112,7 @@ func (ctlr *Controller) updateClusterConfigStore(kubeConfigSecret *v1.Secret, mc
 	// if secret associated with a cluster kubeconfig is deleted then stop all informers for the cluster
 	if deleted {
 		log.Debugf("kubeconfig deleted for cluster %s.Informers are stopped", mcc.ClusterName)
-		ctlr.stopMultiClusterPoolInformers(mcc.ClusterName, true)
-		ctlr.stopMultiClusterNodeInformer(mcc.ClusterName)
-		return nil
+		ctlr.StopInformers(mcc.ClusterName)
 	}
 	// Extract the kubeconfig from the secret
 	kubeConfig, ok := kubeConfigSecret.Data["kubeconfig"]
