@@ -119,7 +119,7 @@ func (ctlr *Controller) setInitialResourceCount() {
 		//otherwise those events will create the duplicate informers for the clusters and we will receive duplicate events.
 		//There will be only valid clusters in the multiclusterhandler
 		// we are reducing the count by one to avoid the local cluster secret processing
-		rscCount += ctlr.multiClusterHandler.getClusterCount() - 1
+		rscCount += ctlr.multiClusterHandler.getClusterCount()
 	}
 	for clusterName, clusterConfig := range ctlr.multiClusterHandler.ClusterConfigs {
 		for _, ns := range ctlr.getWatchingNamespaces(clusterName) {
@@ -406,23 +406,14 @@ func (ctlr *Controller) processResources() bool {
 		}
 	case K8sSecret:
 		secret := rKey.rsc.(*v1.Secret)
+		log.Debugf("lavanya: getting cluster for secret %v", secret)
 		mcc := ctlr.multiClusterHandler.getClusterForSecret(secret.Name, secret.Namespace)
+		log.Debugf("lavanya: getting mcc for secret %v", mcc)
 		// TODO: Process all the resources again that refer to any resource running in the affected cluster?
 		if mcc != (ClusterDetails{}) {
 			err := ctlr.updateClusterConfigStore(secret, mcc, rscDelete)
 			if err != nil {
 				log.Warningf(err.Error())
-			}
-			if !ctlr.initState && rKey.event == Create {
-				//for external clusters
-				if mcc.ServiceTypeLBDiscovery || mcc.ClusterName == ctlr.multiClusterHandler.LocalClusterName {
-					//start all informers for the cluster
-					ctlr.setupAndStartExternalClusterInformers(mcc.ClusterName)
-				} else {
-					//check cluster svc map to start required  namespace informers for cluster
-					ctlr.startInfomersForClusterReferencedSvcs(mcc.ClusterName)
-				}
-
 			}
 			break
 		}

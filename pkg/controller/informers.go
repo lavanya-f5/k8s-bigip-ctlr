@@ -24,11 +24,9 @@ import (
 	"reflect"
 	"time"
 
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/client-go/rest"
-
 	routeapi "github.com/openshift/api/route/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 
 	ficV1 "github.com/F5Networks/f5-ipam-controller/pkg/ipamapis/apis/fic/v1"
@@ -487,21 +485,17 @@ func (ctlr *Controller) newNamespacedNativeResourceInformer(
 
 func (ctlr *Controller) setNodeInformer(clusterName string) NodeInformer {
 	resyncPeriod := 0 * time.Second
-	var restClientv1 rest.Interface
 	log.Debugf("Creating node informers for cluster: %v", clusterName)
 	clusterConfig := ctlr.multiClusterHandler.getClusterConfig(clusterName)
 	nodeOptions := func(options *metav1.ListOptions) {
 		options.LabelSelector = clusterConfig.nodeLabelSelector
 	}
 
-	if config := clusterConfig; config != nil {
-		restClientv1 = config.kubeClient.CoreV1().RESTClient()
-	}
 	nodeInf := NodeInformer{
 		stopCh: make(chan struct{}),
 		nodeInformer: cache.NewSharedIndexInformer(
 			cache.NewFilteredListWatchFromClient(
-				restClientv1,
+				ctlr.multiClusterHandler.getKubeClientForcluster(clusterName),
 				"nodes",
 				"",
 				nodeOptions,
@@ -540,7 +534,6 @@ func (ctlr *Controller) newNamespacedCommonResourceInformer(
 	}
 	resyncPeriod := 0 * time.Second
 	clusterConfig := ctlr.multiClusterHandler.getClusterConfig(clusterName)
-	restClientv1 := clusterConfig.kubeClient.CoreV1().RESTClient()
 	crOptions := func(options *metav1.ListOptions) {
 		options.LabelSelector = clusterConfig.customResourceSelector.String()
 	}
@@ -550,7 +543,7 @@ func (ctlr *Controller) newNamespacedCommonResourceInformer(
 		stopCh:      make(chan struct{}),
 		svcInformer: cache.NewSharedIndexInformer(
 			cache.NewFilteredListWatchFromClient(
-				restClientv1,
+				ctlr.multiClusterHandler.getKubeClientForcluster(clusterName),
 				"services",
 				namespace,
 				everything,
@@ -561,7 +554,7 @@ func (ctlr *Controller) newNamespacedCommonResourceInformer(
 		),
 		secretsInformer: cache.NewSharedIndexInformer(
 			cache.NewFilteredListWatchFromClient(
-				restClientv1,
+				ctlr.multiClusterHandler.getKubeClientForcluster(clusterName),
 				"secrets",
 				namespace,
 				everything,
@@ -577,7 +570,7 @@ func (ctlr *Controller) newNamespacedCommonResourceInformer(
 	} else {
 		comInf.epsInformer = cache.NewSharedIndexInformer(
 			cache.NewFilteredListWatchFromClient(
-				restClientv1,
+				ctlr.multiClusterHandler.getKubeClientForcluster(clusterName),
 				"endpoints",
 				namespace,
 				everything,
@@ -610,7 +603,7 @@ func (ctlr *Controller) newNamespacedCommonResourceInformer(
 		}
 		comInf.cmInformer = cache.NewSharedIndexInformer(
 			cache.NewFilteredListWatchFromClient(
-				restClientv1,
+				ctlr.multiClusterHandler.getKubeClientForcluster(clusterName),
 				"configmaps",
 				namespace,
 				nrOptions,
@@ -624,7 +617,7 @@ func (ctlr *Controller) newNamespacedCommonResourceInformer(
 	if ctlr.PoolMemberType == NodePortLocal || ctlr.mode == OpenShiftMode {
 		comInf.podInformer = cache.NewSharedIndexInformer(
 			cache.NewFilteredListWatchFromClient(
-				restClientv1,
+				ctlr.multiClusterHandler.getKubeClientForcluster(clusterName),
 				"pods",
 				namespace,
 				everything,
@@ -1548,14 +1541,12 @@ func (ctlr *Controller) createNamespaceLabeledInformerForCluster(label string, c
 	}
 
 	resyncPeriod := 0 * time.Second
-	restClient := ctlr.multiClusterHandler.getClusterConfig(clusterName)
-	restClientv1 := restClient.kubeClient.CoreV1().RESTClient()
 	clusterConfig.InformerStore.nsInformers[label] = &NSInformer{
 		clusterName: clusterName,
 		stopCh:      make(chan struct{}),
 		nsInformer: cache.NewSharedIndexInformer(
 			cache.NewFilteredListWatchFromClient(
-				restClientv1,
+				ctlr.multiClusterHandler.getKubeClientForcluster(clusterName),
 				"namespaces",
 				"",
 				namespaceOptions,

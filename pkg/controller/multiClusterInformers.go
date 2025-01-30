@@ -74,7 +74,7 @@ func (ctlr *Controller) newMultiClusterNamespacedPoolInformer(
 		stopCh:      make(chan struct{}),
 		svcInformer: cache.NewSharedIndexInformer(
 			cache.NewFilteredListWatchFromClient(
-				restClientv1,
+				ctlr.multiClusterHandler.getKubeClientForcluster(clusterName),
 				"services",
 				namespace,
 				everything,
@@ -88,7 +88,7 @@ func (ctlr *Controller) newMultiClusterNamespacedPoolInformer(
 	if ctlr.PoolMemberType == NodePortLocal {
 		comInf.podInformer = cache.NewSharedIndexInformer(
 			cache.NewFilteredListWatchFromClient(
-				restClientv1,
+				ctlr.multiClusterHandler.getKubeClientForcluster(clusterName),
 				"pods",
 				namespace,
 				everything,
@@ -102,7 +102,7 @@ func (ctlr *Controller) newMultiClusterNamespacedPoolInformer(
 	if ctlr.PoolMemberType == Cluster || ctlr.PoolMemberType == Auto {
 		comInf.epsInformer = cache.NewSharedIndexInformer(
 			cache.NewFilteredListWatchFromClient(
-				restClientv1,
+				ctlr.multiClusterHandler.getKubeClientForcluster(clusterName),
 				"endpoints",
 				namespace,
 				everything,
