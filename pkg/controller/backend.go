@@ -661,6 +661,7 @@ func (agent *Agent) createAS3LTMConfigADC(config ResourceConfigRequest) as3ADC {
 			adc[tenant] = getDeletedTenantDeclaration(agent.Partition, tenant, cisLabel, &config)
 		}
 	}
+	// commonSharedApp hold objects that needs to be created in common to share across app
 	for tenantName, partitionConfig := range config.ltmConfig {
 		// TODO partitionConfig priority can be overridden by another request if agent is unable to process the prioritized request in time
 		partitionConfig.PriorityMutex.RLock()

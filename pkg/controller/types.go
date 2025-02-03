@@ -569,7 +569,9 @@ type (
 		Path        string `json:"path,omitempty"`
 		TimeUntilUp *int   `json:"timeUntilUp,omitempty"`
 		SSLProfile  string `json:"sslProfile,omitempty"`
+		AllowReuse  bool   `json:"allowReuse,omitempty"`
 	}
+
 	MonitorName struct {
 		Name string `json:"name"`
 		// Reference is used to link existing health monitor on bigip

@@ -629,7 +629,7 @@ func (ctlr *Controller) prepareRSConfigFromVirtualServer(
 
 			if !reflect.DeepEqual(pl.Monitor, cisapiv1.Monitor{}) {
 				ctlr.createVirtualServerMonitor(pl.Monitor, &pool, rsCfg, pl.ServicePort, vs.Spec.Host, pl.Path,
-					vs.ObjectMeta.Namespace+"/"+vs.ObjectMeta.Name, SvcBackend)
+					vs.ObjectMeta.Namespace+"/"+vs.ObjectMeta.Name, pl)
 			} else if pl.Monitors != nil {
 				var formatPort intstr.IntOrString
 				for _, monitor := range pl.Monitors {
@@ -639,7 +639,7 @@ func (ctlr *Controller) prepareRSConfigFromVirtualServer(
 						formatPort = pl.ServicePort
 					}
 					ctlr.createVirtualServerMonitor(monitor, &pool, rsCfg, formatPort, vs.Spec.Host, pl.Path,
-						vs.ObjectMeta.Namespace+"/"+vs.ObjectMeta.Name, SvcBackend)
+						vs.ObjectMeta.Namespace+"/"+vs.ObjectMeta.Name, pl)
 				}
 			}
 			pools = append(pools, pool)
@@ -812,7 +812,7 @@ func (ctlr *Controller) prepareRSConfigFromVirtualServer(
 }
 
 func (ctlr *Controller) createVirtualServerMonitor(monitor cisapiv1.Monitor, pool *Pool, rsCfg *ResourceConfig,
-	formatPort intstr.IntOrString, host, path, vsName string, svcCtx SvcBackendCxt) {
+	formatPort intstr.IntOrString, host, path, vsName string, pl cisapiv1.VSPool) {
 	if !reflect.DeepEqual(monitor, Monitor{}) {
 		if monitor.Reference == BIGIP {
 			if monitor.Name != "" {
@@ -826,15 +826,20 @@ func (ctlr *Controller) createVirtualServerMonitor(monitor cisapiv1.Monitor, poo
 				log.Errorf("missing send string for monitor. skipping monitor for virtual server: %v", vsName)
 				return
 			}
-
+			poolSvc := pl.Service
+			allowReuse := false
+			if ctlr.discoveryMode == DefaultMode {
+				poolSvc = pl.MultiClusterServices[0].SvcName
+				allowReuse = true
+			}
 			monitorName := monitor.Name
 			if monitorName == "" {
-				monitorName = formatMonitorName(pool.ServiceNamespace, svcCtx.Name, monitor.Type, formatPort, host,
+				monitorName = formatMonitorName(pool.ServiceNamespace, poolSvc, monitor.Type, formatPort, host,
 					path)
 			}
 
-			// Format the monitor name in case of multi cluster ratio mode
-			monitorName = ctlr.formatMonitorNameForMultiCluster(monitorName, svcCtx.Cluster)
+			// Format the monitor name in case of multi cluster ratio mode (even with distinct pools he monitor is created from vs spec
+			//monitorName = ctlr.formatMonitorNameForMultiCluster(monitorName, svcCtx.Cluster)
 
 			pool.MonitorNames = append(pool.MonitorNames, MonitorName{Name: JoinBigipPath(rsCfg.Virtual.Partition, monitorName)})
 			monitor := Monitor{
@@ -847,14 +852,18 @@ func (ctlr *Controller) createVirtualServerMonitor(monitor cisapiv1.Monitor, poo
 				Timeout:    monitor.Timeout,
 				TargetPort: monitor.TargetPort,
 				SSLProfile: monitor.SSLProfile,
+				AllowReuse: allowReuse,
 			}
-			rsCfg.Monitors = append(rsCfg.Monitors, monitor)
+			// For ratio or default mode mutliple pools share same monitor, add only unique monitor
+			if isUniqueMonitor(rsCfg.Monitors, monitor) {
+				rsCfg.Monitors = append(rsCfg.Monitors, monitor)
+			}
 		}
 	}
 }
 
 func (ctlr *Controller) createTransportServerMonitor(monitor cisapiv1.Monitor, pool *Pool, rsCfg *ResourceConfig,
-	formatPort intstr.IntOrString, vsNamespace, vsName string, svcCtx SvcBackendCxt) {
+	formatPort intstr.IntOrString, vsNamespace, vsName string, pl cisapiv1.TSPool) {
 	if !reflect.DeepEqual(monitor, Monitor{}) {
 		if monitor.Reference == BIGIP {
 			if monitor.Name != "" {
@@ -865,11 +874,17 @@ func (ctlr *Controller) createTransportServerMonitor(monitor cisapiv1.Monitor, p
 			}
 		} else {
 			monitorName := monitor.Name
+			poolSVC := pl.Service
+			allowReuse := false
+			if ctlr.discoveryMode == DefaultMode {
+				poolSVC = pl.MultiClusterServices[0].SvcName
+				allowReuse = true
+			}
 			if monitorName == "" {
-				monitorName = formatMonitorName(vsNamespace, svcCtx.Name, monitor.Type, formatPort, "", "")
+				monitorName = formatMonitorName(vsNamespace, poolSVC, monitor.Type, formatPort, "", "")
 			}
 			// Format the monitor name in case of multi cluster ratio mode
-			monitorName = ctlr.formatMonitorNameForMultiCluster(monitorName, svcCtx.Cluster)
+			// monitorName = ctlr.formatMonitorNameForMultiCluster(monitorName, svcCtx.Cluster)
 
 			pool.MonitorNames = append(pool.MonitorNames, MonitorName{Name: JoinBigipPath(rsCfg.Virtual.Partition, monitorName)})
 			monitor := Monitor{
@@ -881,8 +896,11 @@ func (ctlr *Controller) createTransportServerMonitor(monitor cisapiv1.Monitor, p
 				Recv:       monitor.Recv,
 				Timeout:    monitor.Timeout,
 				TargetPort: monitor.TargetPort,
+				AllowReuse: allowReuse,
 			}
-			rsCfg.Monitors = append(rsCfg.Monitors, monitor)
+			if isUniqueMonitor(rsCfg.Monitors, monitor) {
+				rsCfg.Monitors = append(rsCfg.Monitors, monitor)
+			}
 		}
 	}
 }
@@ -2401,7 +2419,7 @@ func (ctlr *Controller) prepareRSConfigFromTransportServer(
 				formatPort = pl.ServicePort
 			}
 			ctlr.createTransportServerMonitor(pl.Monitor, &pool, rsCfg, formatPort,
-				vs.ObjectMeta.Namespace, vs.ObjectMeta.Name, SvcBackend)
+				vs.ObjectMeta.Namespace, vs.ObjectMeta.Name, pl)
 		} else if pl.Monitors != nil {
 			var formatPort intstr.IntOrString
 			for _, monitor := range pl.Monitors {
@@ -2411,7 +2429,7 @@ func (ctlr *Controller) prepareRSConfigFromTransportServer(
 					formatPort = pl.ServicePort
 				}
 				ctlr.createTransportServerMonitor(monitor, &pool, rsCfg, formatPort,
-					vs.ObjectMeta.Namespace, vs.ObjectMeta.Name, SvcBackend)
+					vs.ObjectMeta.Namespace, vs.ObjectMeta.Name, pl)
 			}
 		}
 		pools = append(pools, pool)
@@ -3755,6 +3773,16 @@ func getUniqueHosts(host string, hostAliases []string) []string {
 		}
 	}
 	return uniqueHosts
+}
+
+// checkMonitor returns if monitor already exists
+func isUniqueMonitor(monitors []Monitor, monitor Monitor) bool {
+	for _, m := range monitors {
+		if m == monitor {
+			return false // Item already exists
+		}
+	}
+	return true // Item is unique
 }
 
 // GetPoolBackendsForSvcTypeLB returns the services associated with the ServiceTypeLB (svc names + weight)
