@@ -828,9 +828,11 @@ func (ctlr *Controller) createVirtualServerMonitor(monitor cisapiv1.Monitor, poo
 			}
 			poolSvc := pl.Service
 			allowReuse := false
+			monitorPartition := rsCfg.Virtual.Partition
 			if ctlr.discoveryMode == DefaultMode {
 				poolSvc = pl.MultiClusterServices[0].SvcName
 				allowReuse = true
+				monitorPartition = CommonPartition
 			}
 			monitorName := monitor.Name
 			if monitorName == "" {
@@ -841,10 +843,11 @@ func (ctlr *Controller) createVirtualServerMonitor(monitor cisapiv1.Monitor, poo
 			// Format the monitor name in case of multi cluster ratio mode (even with distinct pools he monitor is created from vs spec
 			//monitorName = ctlr.formatMonitorNameForMultiCluster(monitorName, svcCtx.Cluster)
 
-			pool.MonitorNames = append(pool.MonitorNames, MonitorName{Name: JoinBigipPath(rsCfg.Virtual.Partition, monitorName)})
+			pool.MonitorNames = append(pool.MonitorNames, MonitorName{Name: JoinBigipPath(monitorPartition, monitorName)})
+
 			monitor := Monitor{
 				Name:       monitorName,
-				Partition:  rsCfg.Virtual.Partition,
+				Partition:  monitorPartition,
 				Type:       monitor.Type,
 				Interval:   monitor.Interval,
 				Send:       monitor.Send,
@@ -874,11 +877,13 @@ func (ctlr *Controller) createTransportServerMonitor(monitor cisapiv1.Monitor, p
 			}
 		} else {
 			monitorName := monitor.Name
+			monitorPartition := rsCfg.Virtual.Partition
 			poolSVC := pl.Service
 			allowReuse := false
 			if ctlr.discoveryMode == DefaultMode {
 				poolSVC = pl.MultiClusterServices[0].SvcName
 				allowReuse = true
+				monitorPartition = CommonPartition
 			}
 			if monitorName == "" {
 				monitorName = formatMonitorName(vsNamespace, poolSVC, monitor.Type, formatPort, "", "")
@@ -886,10 +891,10 @@ func (ctlr *Controller) createTransportServerMonitor(monitor cisapiv1.Monitor, p
 			// Format the monitor name in case of multi cluster ratio mode
 			// monitorName = ctlr.formatMonitorNameForMultiCluster(monitorName, svcCtx.Cluster)
 
-			pool.MonitorNames = append(pool.MonitorNames, MonitorName{Name: JoinBigipPath(rsCfg.Virtual.Partition, monitorName)})
+			pool.MonitorNames = append(pool.MonitorNames, MonitorName{Name: JoinBigipPath(monitorPartition, monitorName)})
 			monitor := Monitor{
 				Name:       monitorName,
-				Partition:  rsCfg.Virtual.Partition,
+				Partition:  monitorPartition,
 				Type:       monitor.Type,
 				Interval:   monitor.Interval,
 				Send:       monitor.Send,

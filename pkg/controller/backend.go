@@ -296,14 +296,12 @@ func (agent *Agent) agentWorker() {
 		for tenant := range agent.incomingTenantDeclMap {
 			// CIS with AS3 doesnt allow write to Common partition.So objects in common partition
 			// should not be updated or deleted by CIS. So removing from tenant map
-			if tenant != "Common" {
-				if _, ok := agent.tenantPriorityMap[tenant]; ok {
-					priorityTenants = append(priorityTenants, tenant)
-				} else {
-					updatedTenants = append(updatedTenants, tenant)
-				}
-				agent.tenantResponseMap[tenant] = tenantResponse{}
+			if _, ok := agent.tenantPriorityMap[tenant]; ok {
+				priorityTenants = append(priorityTenants, tenant)
+			} else {
+				updatedTenants = append(updatedTenants, tenant)
 			}
+			agent.tenantResponseMap[tenant] = tenantResponse{}
 		}
 
 		// Update the priority tenants first
@@ -661,6 +659,10 @@ func (agent *Agent) createAS3LTMConfigADC(config ResourceConfigRequest) as3ADC {
 			adc[tenant] = getDeletedTenantDeclaration(agent.Partition, tenant, cisLabel, &config)
 		}
 	}
+	// Create Common Shared as3Application object to create reusable objects
+	CommonSharedApp := as3Application{}
+	CommonSharedApp["class"] = "Application"
+	CommonSharedApp["template"] = "shared"
 	// commonSharedApp hold objects that needs to be created in common to share across app
 	for tenantName, partitionConfig := range config.ltmConfig {
 		// TODO partitionConfig priority can be overridden by another request if agent is unable to process the prioritized request in time
@@ -681,7 +683,7 @@ func (agent *Agent) createAS3LTMConfigADC(config ResourceConfigRequest) as3ADC {
 
 		// Process rscfg to create AS3 Resources
 		processResourcesForAS3(partitionConfig.ResourceMap, sharedApp, config.shareNodes, tenantName,
-			config.poolMemberType, agent.bigIPAS3Version)
+			config.poolMemberType, agent.bigIPAS3Version, CommonSharedApp)
 
 		// Process CustomProfiles
 		processCustomProfilesForAS3(partitionConfig.ResourceMap, sharedApp, agent.bigIPAS3Version)
@@ -702,6 +704,13 @@ func (agent *Agent) createAS3LTMConfigADC(config ResourceConfigRequest) as3ADC {
 		}
 		adc[tenantName] = tenantDecl
 	}
+	// create common shared declaration
+	CommonTenantDecl := as3Tenant{
+		"class":              "Tenant",
+		as3SharedApplication: CommonSharedApp,
+		"label":              CommonPartition,
+	}
+	adc[CommonPartition] = CommonTenantDecl
 	return adc
 }
 
@@ -779,13 +788,13 @@ func processDataGroupForAS3(rsMap ResourceMap, sharedApp as3Application) {
 }
 
 // Process for AS3 Resource
-func processResourcesForAS3(rsMap ResourceMap, sharedApp as3Application, shareNodes bool, tenant, poolMemberType string, bigipAs3Version float64) {
+func processResourcesForAS3(rsMap ResourceMap, sharedApp as3Application, shareNodes bool, tenant, poolMemberType string, bigipAs3Version float64, commonSharedApp as3Application) {
 	for _, cfg := range rsMap {
 		//Create policies
 		createPoliciesDecl(cfg, sharedApp)
 
 		//Create health monitor declaration
-		createMonitorDecl(cfg, sharedApp)
+		createMonitorDecl(cfg, sharedApp, commonSharedApp)
 
 		//Create pools
 		createPoolDecl(cfg, sharedApp, shareNodes, tenant, poolMemberType)
@@ -870,11 +879,19 @@ func createPoolDecl(cfg *ResourceConfig, sharedApp as3Application, shareNodes bo
 				monitor.BigIP = val.Name
 			} else {
 				use := strings.Split(val.Name, "/")
-				monitor.Use = fmt.Sprintf("/%s/%s/%s",
-					tenant,
-					as3SharedApplication,
-					use[len(use)-1],
-				)
+				if use[1] == "Common" {
+					monitor.BigIP = fmt.Sprintf("/%s/%s/%s",
+						CommonPartition,
+						as3SharedApplication,
+						use[len(use)-1],
+					)
+				} else {
+					monitor.Use = fmt.Sprintf("/%s/%s/%s",
+						tenant,
+						as3SharedApplication,
+						use[len(use)-1],
+					)
+				}
 			}
 			pool.Monitors = append(pool.Monitors, monitor)
 		}
@@ -1722,7 +1739,7 @@ func createTLSClient(
 }
 
 // Create health monitor declaration
-func createMonitorDecl(cfg *ResourceConfig, sharedApp as3Application) {
+func createMonitorDecl(cfg *ResourceConfig, sharedApp as3Application, commonSharedApp as3Application) {
 
 	for _, v := range cfg.Monitors {
 		monitor := &as3Monitor{}
@@ -1764,7 +1781,11 @@ func createMonitorDecl(cfg *ResourceConfig, sharedApp as3Application) {
 			monitor.Receive = v.Recv
 			monitor.Send = v.Send
 		}
-		sharedApp[v.Name] = monitor
+		if v.AllowReuse == true {
+			commonSharedApp[v.Name] = monitor
+		} else {
+			sharedApp[v.Name] = monitor
+		}
 	}
 
 }
