@@ -119,6 +119,7 @@ const (
 	LBServiceHostAnnotation                 = "cis.f5.com/host"
 	LBServicePartitionAnnotation            = "cis.f5.com/partition"
 	LBServiceMultiClusterServicesAnnotation = "cis.f5.com/multiClusterServices"
+	LBServiceNginxBackendAnnotation         = "cis.f5.com/nginx-proxy-backend"
 	HealthMonitorAnnotation                 = "cis.f5.com/health"
 	LBServicePolicyNameAnnotation           = "cis.f5.com/policyName"
 	LegacyHealthMonitorAnnotation           = "virtual-server.f5.com/health"

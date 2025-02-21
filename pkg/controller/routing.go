@@ -737,6 +737,104 @@ func (ctlr *Controller) getABDeployIruleForTS(rsVSName string, partition string,
 	}`, dgPath, rsVSName, strings.ToUpper(tsType))
 }
 
+func (ctlr *Controller) getABDeployIruleForTSWithHttpRetry(rsVSName string, partition string, tsType string) string {
+	dgPath := strings.Join([]string{partition, Shared}, "/")
+	return fmt.Sprintf(`when CLIENT_ACCEPTED {
+    # Initialize variables
+    set ab_class "/%[1]s/%[2]s_ab_deployment_dg"
+    set ab_rule [class match -value "/" equals $ab_class]
+    set retries 0
+    set request_headers ""
+    set pool_list [list]
+    set active_pool ""
+
+    # Populate the pool list and determine the active pool
+    if {$ab_rule != ""} then {
+        set service_rules [split $ab_rule ";"]
+        foreach service_rule $service_rules {
+            set fields [split $service_rule ","]
+            set pool_name [lindex $fields 0]
+            lappend pool_list $pool_name
+            if { [active_members $pool_name] >= 1 } {
+                set active_pool $pool_name
+            }
+        }
+    }
+
+    # Select the initial pool based on weights
+    if {$ab_rule != ""} then {
+        set weight_selection [expr {rand()}]
+        foreach service_rule $service_rules {
+            set fields [split $service_rule ","]
+            set pool_name [lindex $fields 0]
+            set weight [expr {double([lindex $fields 1])}]
+            if {$weight_selection <= $weight} then {
+                # Check if active pool members are available
+                if { [active_members $pool_name] >= 1 } {
+                    pool $pool_name
+                    return
+                } else {
+                    # Select other pool with active members
+                    if {$active_pool != ""} then {
+                        pool $active_pool
+                        return
+                    }
+                }
+            }
+        }
+    }
+
+    # If no active pool members are found, return a 503 (Service Unavailable)
+    if {$active_pool == ""} then {
+        %[3]s::respond 503
+        return
+    }
+}
+
+when HTTP_REQUEST {
+    # Save the request headers if it is a GET request and not a retried request
+    if { [HTTP::method] eq "GET" && $retries == 0 } {
+        set request_headers [HTTP::request]
+        log local0. "Saving HTTP request headers: $request_headers"
+    }
+}
+
+when HTTP_RESPONSE {
+    # Check if we got a 503 response
+    if { [HTTP::status] == 503 } {
+        # Log the 503 response for debugging purposes
+        log local0. "Received 503 response, retrying request with next pool"
+
+        # Increment the retry counter
+        incr retries
+
+        # Get the current pool
+        set current_pool [LB::server pool]
+
+        # Find the next pool in the list
+        set next_pool ""
+        foreach pool $pool_list {
+            if { $pool == $current_pool } {
+                continue
+            }
+            if { [active_members $pool] >= 1 } {
+                set next_pool $pool
+                break
+            }
+        }
+
+        # If a next pool is found, retry the request with the next pool
+        if { $next_pool != "" } {
+            pool $next_pool
+            HTTP::retry $request_headers
+        } else {
+            # If no next pool is found, return a 503 (Service Unavailable)
+            %[3]s::respond 503
+        }
+    }
+}`, dgPath, rsVSName, strings.ToUpper(tsType))
+}
+
 func (ctlr *Controller) getPathBasedABDeployIRule(rsVSName string, partition string, multiPoolPersistence MultiPoolPersistence) string {
 	dgPath := strings.Join([]string{partition, Shared}, "/")
 

@@ -1837,7 +1837,6 @@ func createTransportServiceDecl(cfg *ResourceConfig, sharedApp as3Application, t
 			}
 		}
 	}
-
 	// Attaching Profiles from Policy CRD
 	for _, profile := range cfg.Virtual.Profiles {
 		_, name := getPartitionAndName(profile.Name)
@@ -1850,9 +1849,14 @@ func createTransportServiceDecl(cfg *ResourceConfig, sharedApp as3Application, t
 					BigIP: fmt.Sprintf("%v", profile.Name),
 				}
 			}
+		case "http":
+			if profile.BigIPProfile {
+				svc.ProfileHTTP = &as3ResourcePointer{
+					BigIP: fmt.Sprintf("%v", profile.Name),
+				}
+			}
 		}
 	}
-
 	if cfg.Virtual.TranslateServerAddress == true {
 		svc.TranslateServerAddress = cfg.Virtual.TranslateServerAddress
 	}

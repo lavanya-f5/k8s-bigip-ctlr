@@ -2277,6 +2277,14 @@ func (ctlr *Controller) HandlePathBasedABIRuleTS(rsCfg *ResourceConfig) {
 	rsCfg.Virtual.AddIRule(ruleName)
 }
 
+func (ctlr *Controller) HandlePathBasedABIRuleTSWithHttpRetry(rsCfg *ResourceConfig) {
+	ruleName := getRSCfgResName(rsCfg.Virtual.Name, ABPathIRuleName)
+	rsCfg.addIRule(
+		ruleName, rsCfg.Virtual.Partition,
+		ctlr.getABDeployIruleForTSWithHttpRetry(rsCfg.Virtual.Name, rsCfg.Virtual.Partition, rsCfg.Virtual.IpProtocol))
+	rsCfg.Virtual.AddIRule(ruleName)
+}
+
 func (ctlr *Controller) HandlePathBasedABIRule(
 	rsCfg *ResourceConfig,
 	vsHost string,
@@ -2671,8 +2679,18 @@ func (ctlr *Controller) prepareRSConfigFromLBService(
 				svcPort,
 				clusterName,
 			)
-			// Handle AB path based IRules for insecure virtualserver
-			ctlr.HandlePathBasedABIRuleTS(rsCfg)
+			proxyBackend, found := svc.Annotations[LBServiceNginxBackendAnnotation]
+			if found && proxyBackend == "true" {
+				rsCfg.Virtual.Profiles = append(rsCfg.Virtual.Profiles, ProfileRef{
+					Name:         "/Common/http",
+					Context:      "http",
+					BigIPProfile: true,
+				})
+				ctlr.HandlePathBasedABIRuleTSWithHttpRetry(rsCfg)
+			} else {
+				// Handle AB path based IRules for insecure virtualserver
+				ctlr.HandlePathBasedABIRuleTS(rsCfg)
+			}
 		}
 	}
 	rsCfg.Pools = append(rsCfg.Pools, pools...)
