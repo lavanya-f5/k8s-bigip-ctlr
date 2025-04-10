@@ -296,7 +296,7 @@ func formatCustomVirtualServerName(name string, port int32) string {
 	return fmt.Sprintf("%s_%d", name, port)
 }
 
-func (ctlr *Controller) framePoolNameForTS(ns string, pool cisapiv1.TSPool, cxt SvcBackendCxt) string {
+func (ctlr *Controller) framePoolNameForTS(ns string, pool cisapiv1.TSPool, cxt SvcBackendCxt, ip string) string {
 	poolName := pool.Name
 	if poolName == "" || pool.AlternateBackends != nil {
 		targetPort := pool.ServicePort
@@ -310,12 +310,12 @@ func (ctlr *Controller) framePoolNameForTS(ns string, pool cisapiv1.TSPool, cxt 
 		if (intstr.IntOrString{}) == targetPort {
 			targetPort = ctlr.fetchTargetPort(svcNamespace, cxt.Name, pool.ServicePort, cxt.Cluster)
 		}
-		poolName = ctlr.formatPoolName(svcNamespace, cxt.Name, targetPort, pool.NodeMemberLabel, "", cxt.Cluster)
+		poolName = ctlr.formatPoolName(svcNamespace, cxt.Name, targetPort, pool.NodeMemberLabel, "", cxt.Cluster, ip)
 	}
 	return poolName
 }
 
-func (ctlr *Controller) framePoolNameForDefaultPool(ns string, pool cisapiv1.DefaultPool, host string) string {
+func (ctlr *Controller) framePoolNameForDefaultPool(ns string, pool cisapiv1.DefaultPool, host string, ip string) string {
 	poolName := pool.Name
 	if poolName == "" {
 		targetPort := pool.ServicePort
@@ -326,12 +326,12 @@ func (ctlr *Controller) framePoolNameForDefaultPool(ns string, pool cisapiv1.Def
 			}
 			targetPort = ctlr.fetchTargetPort(svcNamespace, pool.Service, pool.ServicePort, "")
 		}
-		poolName = ctlr.formatPoolName(ns, pool.Service, targetPort, pool.NodeMemberLabel, host, "")
+		poolName = ctlr.formatPoolName(ns, pool.Service, targetPort, pool.NodeMemberLabel, host, "", ip)
 	}
 	return poolName
 }
 
-func (ctlr *Controller) framePoolNameForVS(ns string, pool cisapiv1.VSPool, host string, cxt SvcBackendCxt) string {
+func (ctlr *Controller) framePoolNameForVS(ns string, pool cisapiv1.VSPool, host string, cxt SvcBackendCxt, ip string) string {
 	poolName := pool.Name
 	if poolName == "" || pool.AlternateBackends != nil {
 		targetPort := pool.ServicePort
@@ -345,17 +345,22 @@ func (ctlr *Controller) framePoolNameForVS(ns string, pool cisapiv1.VSPool, host
 		if (intstr.IntOrString{}) == targetPort {
 			targetPort = ctlr.fetchTargetPort(svcNamespace, cxt.Name, pool.ServicePort, cxt.Cluster)
 		}
-		poolName = ctlr.formatPoolName(svcNamespace, cxt.Name, targetPort, pool.NodeMemberLabel, host, cxt.Cluster)
+		poolName = ctlr.formatPoolName(svcNamespace, cxt.Name, targetPort, pool.NodeMemberLabel, host, cxt.Cluster, ip)
 	}
 	return poolName
 }
 
 // format the pool name for an VirtualServer
-func (ctlr *Controller) formatPoolName(namespace, svc string, port intstr.IntOrString, nodeMemberLabel string, host, cluster string) string {
+func (ctlr *Controller) formatPoolName(namespace, svc string, port intstr.IntOrString, nodeMemberLabel string, host, cluster string, ip string) string {
 	servicePort := fetchPortString(port)
 	poolName := fmt.Sprintf("%s_%s_%s", svc, servicePort, namespace)
 	if len(host) > 0 {
 		poolName = fmt.Sprintf("%s_%s", poolName, host)
+	} else if len(ip) > 0 {
+		ip = strings.Trim(ip, "[]")
+		ip = AS3NameFormatter(ip)
+		//for hostless scenarios, add virtual ip address to pool name
+		poolName = fmt.Sprintf("%s_%s", poolName, ip)
 	}
 	if nodeMemberLabel != "" {
 		if strings.HasSuffix(nodeMemberLabel, "=") {
@@ -545,7 +550,7 @@ func (ctlr *Controller) prepareRSConfigFromVirtualServer(
 		// Fetch service backends with weights for pool
 		backendSvcs := ctlr.GetPoolBackendsForVS(&pl, vs.Namespace)
 		for _, SvcBackend := range backendSvcs {
-			poolName := ctlr.framePoolNameForVS(vs.Namespace, pl, vs.Spec.Host, SvcBackend)
+			poolName := ctlr.framePoolNameForVS(vs.Namespace, pl, vs.Spec.Host, SvcBackend, vs.Status.VSAddress)
 			if _, ok := framedPools[poolName]; ok {
 				// Pool with same name framed earlier, so skipping this pool
 				log.Debugf("Duplicate pool name: %v in Virtual Server: %v/%v", poolName, vs.Namespace, vs.Name)
@@ -667,6 +672,7 @@ func (ctlr *Controller) prepareRSConfigFromVirtualServer(
 						vs.Spec.Host,
 						vs.Spec.HostAliases,
 						tlsTermination,
+						vs.Status.VSAddress,
 					)
 					// path based AB deployment/Cluster ratio not supported for passthrough
 					if (isVsPathBasedABDeployment(&pl) || isVsPathBasedRatioDeployment(&pl, ctlr.discoveryMode)) &&
@@ -691,6 +697,7 @@ func (ctlr *Controller) prepareRSConfigFromVirtualServer(
 						vs.Spec.Host,
 						vs.Spec.HostAliases,
 						tlsTermination,
+						vs.Status.VSAddress,
 					)
 					// Handle AB path based IRules for insecure virtualserver
 					ctlr.HandlePathBasedABIRule(rsCfg, vs.Spec.Host, tlsTermination)
@@ -979,7 +986,7 @@ func (ctlr *Controller) handleDefaultPool(
 			rsCfg.Virtual.PoolName = vs.Spec.DefaultPool.Name
 			rsCfg.MetaData.defaultPoolType = BIGIP
 		} else if vs.Spec.DefaultPool.Reference == ServiceRef {
-			rsCfg.Virtual.PoolName = ctlr.framePoolNameForDefaultPool(vs.Namespace, vs.Spec.DefaultPool, vs.Spec.Host)
+			rsCfg.Virtual.PoolName = ctlr.framePoolNameForDefaultPool(vs.Namespace, vs.Spec.DefaultPool, vs.Spec.Host, vs.Status.VSAddress)
 			svcNamespace := vs.Namespace
 			if vs.Spec.DefaultPool.ServiceNamespace != "" {
 				svcNamespace = vs.Spec.DefaultPool.ServiceNamespace
@@ -1046,6 +1053,7 @@ func (ctlr *Controller) handleDefaultPoolForPolicy(
 	host string,
 	httpTraffic string,
 	isTLS bool,
+	ip string,
 ) {
 	// if it's an insecure virtual server and vs traffic is redirect or none, we should not add the default pool
 	if rsCfg.MetaData.Protocol == HTTP && isTLS && (httpTraffic == TLSRedirectInsecure || httpTraffic == TLSNoInsecure) {
@@ -1056,7 +1064,7 @@ func (ctlr *Controller) handleDefaultPoolForPolicy(
 			rsCfg.Virtual.PoolName = plc.Spec.DefaultPool.Name
 			rsCfg.MetaData.defaultPoolType = BIGIP
 		} else if plc.Spec.DefaultPool.Reference == ServiceRef {
-			rsCfg.Virtual.PoolName = ctlr.framePoolNameForDefaultPool(rsRef.namespace, plc.Spec.DefaultPool, host)
+			rsCfg.Virtual.PoolName = ctlr.framePoolNameForDefaultPool(rsRef.namespace, plc.Spec.DefaultPool, host, ip)
 			svcNamespace := rsRef.namespace
 			if plc.Spec.DefaultPool.ServiceNamespace != "" {
 				svcNamespace = plc.Spec.DefaultPool.ServiceNamespace
@@ -1654,6 +1662,7 @@ func (ctlr *Controller) handleVirtualServerTLS(
 				pl,
 				vs.Spec.Host,
 				backend,
+				vs.Status.VSAddress,
 			)
 			if len(tls.Spec.Hosts) > 1 && !hasWildcardHost(tls.Spec.Hosts) {
 				// For wildcard certificates, multiple hosts may be mapped to different subdomains
@@ -2432,7 +2441,7 @@ func (ctlr *Controller) prepareRSConfigFromTransportServer(
 			SvcBackend.SvcPort = pl.ServicePort
 			svcPortUsed = true
 		}
-		poolName := ctlr.framePoolNameForTS(vs.Namespace, pl, SvcBackend)
+		poolName := ctlr.framePoolNameForTS(vs.Namespace, pl, SvcBackend, vs.Status.VSAddress)
 		if _, ok := framedPools[poolName]; ok {
 			// Pool with same name framed earlier, so skipping this pool
 			log.Debugf("Duplicate pool name: %v in Transport Server: %v/%v", poolName, vs.Namespace, vs.Name)
@@ -2531,6 +2540,7 @@ func (ctlr *Controller) prepareRSConfigFromTransportServer(
 				vs.Namespace,
 				rsCfg.IntDgMap,
 				SvcBackend.SvcPort,
+				vs.Status.VSAddress,
 			)
 			// Handle AB path based IRules for insecure virtualserver
 			ctlr.HandlePathBasedABIRuleTS(rsCfg)
@@ -2631,7 +2641,7 @@ func (ctlr *Controller) prepareRSConfigFromIngressLink(
 				monitorNames = append(monitorNames, monitorName)
 			}
 		} else {
-			monitorName := fmt.Sprintf("%s_monitor", ctlr.formatPoolName(svc.ObjectMeta.Namespace, svc.ObjectMeta.Name, intstr.IntOrString{IntVal: serviceport.Port}, "", "", SvcBackend.Cluster))
+			monitorName := fmt.Sprintf("%s_monitor", ctlr.formatPoolName(svc.ObjectMeta.Namespace, svc.ObjectMeta.Name, intstr.IntOrString{IntVal: serviceport.Port}, "", "", SvcBackend.Cluster, il.Status.VSAddress))
 			monitorRefName := MonitorName{Name: JoinBigipPath(rsCfg.Virtual.Partition, monitorName)}
 			monitorNames = append(monitorNames, monitorRefName)
 			rsCfg.Monitors = append(
@@ -2650,7 +2660,7 @@ func (ctlr *Controller) prepareRSConfigFromIngressLink(
 			SvcBackend.SvcNamespace,
 			SvcBackend.Name,
 			SvcBackend.SvcPort, // It's the target port of the service
-			"", "", SvcBackend.Cluster)
+			"", "", SvcBackend.Cluster, il.Status.VSAddress)
 		if _, ok := framedPools[poolName]; ok {
 			// Pool with same name framed earlier, so skipping this pool
 			log.Debugf("Duplicate pool name: %v in ingressLink service: %v/%v", poolName, SvcBackend.SvcNamespace, SvcBackend.Name)
@@ -2736,6 +2746,7 @@ func (ctlr *Controller) prepareRSConfigFromIngressLink(
 				rsCfg.IntDgMap,
 				serviceport,
 				SvcBackend.Cluster,
+				il.Status.VSAddress,
 			)
 			// Handle AB path based IRules for IngressLink
 			ctlr.HandlePathBasedABIRuleIL(rsCfg, &serviceport)
@@ -2776,6 +2787,7 @@ func (ctlr *Controller) prepareRSConfigFromLBService(
 	svcPort v1.ServicePort,
 	clusterName string,
 	multiClusterServices []cisapiv1.MultiClusterServiceReference,
+	ip string,
 ) error {
 	var pools Pools
 	var backendSvcs []SvcBackendCxt
@@ -2846,7 +2858,7 @@ func (ctlr *Controller) prepareRSConfigFromLBService(
 			SvcBackend.SvcNamespace,
 			SvcBackend.Name,
 			SvcBackend.SvcPort, // It's the target port of the service which GetPoolBackendsForSvcTypeLB populates
-			"", "", SvcBackend.Cluster)
+			"", "", SvcBackend.Cluster, ip)
 		if _, ok := framedPools[poolName]; ok {
 			// Pool with same name framed earlier, so skipping this pool
 			log.Debugf("Duplicate pool name: %v in ServiceTypeLB: %v/%v", poolName, svc.Namespace, svc.Name)
@@ -2932,6 +2944,7 @@ func (ctlr *Controller) prepareRSConfigFromLBService(
 				rsCfg.IntDgMap,
 				svcPort,
 				clusterName,
+				ip,
 			)
 			// Handle AB path based IRules for insecure virtualserver
 			ctlr.HandlePathBasedABIRuleTS(rsCfg)
@@ -3312,6 +3325,7 @@ func (ctlr *Controller) handleRouteTLS(
 			"",
 			"",
 			pl.Cluster,
+			"",
 		) {
 			poolPathRefs = append(
 				poolPathRefs,
@@ -3322,8 +3336,7 @@ func (ctlr *Controller) handleRouteTLS(
 						route.Spec.To.Name,
 						pl.ServicePort,
 						"",
-						"",
-						pl.Cluster),
+						"", "", ""),
 					[]string{route.Spec.Host},
 				})
 		}

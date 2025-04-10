@@ -180,7 +180,7 @@ func (ctlr *Controller) processRoutes(routeGroup string, triggerDelete bool) err
 							httpTraffic = strings.ToLower(string(rt.Spec.TLS.InsecureEdgeTerminationPolicy))
 						}
 					}
-					ctlr.handleDefaultPoolForPolicy(rsCfg, plc, rsRef, "", httpTraffic, isSecureRoute(rt))
+					ctlr.handleDefaultPoolForPolicy(rsCfg, plc, rsRef, "", httpTraffic, isSecureRoute(rt), "")
 				}
 			}
 			if isSecureRoute(rt) {
@@ -484,6 +484,7 @@ func (ctlr *Controller) prepareResourceConfigFromRoute(
 				"",
 				"",
 				bs.Cluster,
+				"",
 			),
 			Partition:        rsCfg.Virtual.Partition,
 			ServiceName:      bs.Name,
@@ -591,6 +592,7 @@ func (ctlr *Controller) prepareResourceConfigFromRoute(
 		route.Namespace,
 		route.Spec.To.Name,
 		servicePort,
+		"",
 		"",
 		"",
 		"",
@@ -793,6 +795,7 @@ func (ctlr *Controller) UpdatePoolHealthMonitors(svcKey MultiClusterServiceKey) 
 		svcKey.namespace,
 		svcKey.serviceName,
 		servicePort,
+		"",
 		"",
 		"",
 		"",

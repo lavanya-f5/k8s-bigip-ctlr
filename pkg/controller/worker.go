@@ -1605,7 +1605,7 @@ func (ctlr *Controller) processVirtualServers(
 							namespace: virtual.Namespace,
 							kind:      VirtualServer,
 						}
-						ctlr.handleDefaultPoolForPolicy(rsCfg, plc, rsRef, virtual.Spec.Host, virtual.Spec.HTTPTraffic, isTLSVirtualServer(virtual))
+						ctlr.handleDefaultPoolForPolicy(rsCfg, plc, rsRef, virtual.Spec.Host, virtual.Spec.HTTPTraffic, isTLSVirtualServer(virtual), ip)
 					}
 				}
 			}
@@ -3586,7 +3586,7 @@ func (ctlr *Controller) processLBServices(
 			}
 		}
 
-		_ = ctlr.prepareRSConfigFromLBService(rsCfg, svc, portSpec, clusterName, multiClusterServices)
+		_ = ctlr.prepareRSConfigFromLBService(rsCfg, svc, portSpec, clusterName, multiClusterServices, ip)
 
 		// handle pool settings from policy cr
 		if plc != nil {

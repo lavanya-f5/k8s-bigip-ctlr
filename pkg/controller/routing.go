@@ -98,6 +98,7 @@ func (ctlr *Controller) prepareVirtualServerRules(
 					pl,
 					vs.Spec.Host,
 					backend,
+					vs.Status.VSAddress,
 				)
 				ruleName := formatVirtualServerRuleName(host, vs.Spec.HostGroup, path, poolName, hostAliasesUsed)
 				var err error
@@ -1638,6 +1639,7 @@ func (ctlr *Controller) updateDataGroupForABRoute(
 				"",
 				"",
 				be.Cluster,
+				"",
 			)
 			entry := fmt.Sprintf("%s,%4.3f", poolName, weightedSliceThreshold)
 			entries = append(entries, entry)
@@ -1919,6 +1921,7 @@ func (ctlr *Controller) updateDataGroupForABTransportServer(
 	namespace string,
 	dgMap InternalDataGroupMap,
 	port intstr.IntOrString,
+	ip string,
 ) {
 	if !isTSABDeployment(&pool) && ctlr.discoveryMode != Ratio && ctlr.discoveryMode != DefaultMode {
 		/*
@@ -1962,7 +1965,7 @@ func (ctlr *Controller) updateDataGroupForABTransportServer(
 			if be.SvcNamespace != "" {
 				svcNamespace = be.SvcNamespace
 			}
-			poolName := ctlr.framePoolNameForTS(svcNamespace, pool, be)
+			poolName := ctlr.framePoolNameForTS(svcNamespace, pool, be, ip)
 			entry := fmt.Sprintf("%s,%4.3f", poolName, weightedSliceThreshold)
 			entries = append(entries, entry)
 		}
@@ -1983,6 +1986,7 @@ func (ctlr *Controller) updateDataGroupForABVirtualServer(
 	host string,
 	hostAliases []string,
 	termination string,
+	ip string,
 ) {
 	if !isVSABDeployment(pool) && ctlr.discoveryMode != Ratio && ctlr.discoveryMode != DefaultMode {
 		/*
@@ -2039,6 +2043,7 @@ func (ctlr *Controller) updateDataGroupForABVirtualServer(
 				"",
 				host,
 				be.Cluster,
+				ip,
 			)
 			entry := fmt.Sprintf("%s,%4.3f", poolName, weightedSliceThreshold)
 			entries = append(entries, entry)
@@ -2064,6 +2069,7 @@ func (ctlr *Controller) updateDataGroupForAdvancedSvcTypeLB(
 	dgMap InternalDataGroupMap,
 	port v1.ServicePort,
 	clusterName string,
+	ip string,
 ) {
 	if multiClusterServices == nil {
 		return
@@ -2098,7 +2104,7 @@ func (ctlr *Controller) updateDataGroupForAdvancedSvcTypeLB(
 				svcNamespace,
 				be.Name,
 				be.SvcPort,
-				"", "", be.Cluster)
+				"", "", be.Cluster, ip)
 			entry := fmt.Sprintf("%s,%4.3f", poolName, weightedSliceThreshold)
 			entries = append(entries, entry)
 		}
@@ -2117,6 +2123,7 @@ func (ctlr *Controller) updateDataGroupForIngressLink(
 	dgMap InternalDataGroupMap,
 	port v1.ServicePort,
 	clusterName string,
+	ip string,
 ) {
 	if multiClusterServices == nil {
 		return
@@ -2151,7 +2158,7 @@ func (ctlr *Controller) updateDataGroupForIngressLink(
 				svcNamespace,
 				be.Name,
 				be.SvcPort,
-				"", "", be.Cluster)
+				"", "", be.Cluster, ip)
 			entry := fmt.Sprintf("%s,%4.3f", poolName, weightedSliceThreshold)
 			entries = append(entries, entry)
 		}
