@@ -382,8 +382,12 @@ func (ctlr *Controller) formatPoolName(namespace, svc string, port intstr.IntOrS
 }
 
 // format the monitor name for an VirtualServer pool
-func formatMonitorName(namespace, svc string, monitorType string, port intstr.IntOrString, hostName string, path string) string {
-	monitorName := fmt.Sprintf("%s_%s", svc, namespace)
+func formatMonitorName(namespace, ip string, monitorType string, port intstr.IntOrString, hostName string, path string) string {
+	// Strip any bracket characters; replace special characters ". : /"
+	// with "-" and "%" with ".", for naming purposes
+	ip = strings.Trim(ip, "[]")
+	ip = AS3NameFormatter(ip)
+	monitorName := fmt.Sprintf("%s_%s", ip, namespace)
 
 	if len(hostName) > 0 {
 		monitorName = monitorName + fmt.Sprintf("_%s", hostName)
