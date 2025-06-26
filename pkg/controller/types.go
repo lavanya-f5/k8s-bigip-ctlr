@@ -1044,6 +1044,7 @@ type (
 		Class    string     `json:"class,omitempty"`
 		Rules    []*as3Rule `json:"rules,omitempty"`
 		Strategy string     `json:"strategy,omitempty"`
+		Label    string     `json:"label,omitempty"`
 	}
 
 	// as3Rule maps to Endpoint_Policy_Rule in AS3 Resources
@@ -1152,6 +1153,7 @@ type (
 		ReselectTries     int32                `json:"reselectTries,omitempty"`
 		SlowRampTime      int32                `json:"slowRampTime,omitempty"`
 		Remark            string               `json:"remark,omitempty"`
+		Label             string               `json:"label,omitempty"`
 	}
 
 	// as3PoolMember maps to Pool_Member in AS3 Resources
@@ -1222,6 +1224,7 @@ type (
 		ProfileFTP             as3MultiTypeParam    `json:"profileFTP,omitempty"`
 		ProfileRequestAdapt    as3MultiTypeParam    `json:"profileRequestAdapt,omitempty"`
 		ProfileResponseAdapt   as3MultiTypeParam    `json:"profileResponseAdapt,omitempty"`
+		Label                  string               `json:"label,omitempty"`
 	}
 
 	// as3ServiceAddress maps to VirtualAddress in AS3 Resources
@@ -1254,6 +1257,7 @@ type (
 		ClientCertificate string              `json:"clientCertificate,omitempty"`
 		Ciphers           string              `json:"ciphers,omitempty"`
 		ClientTLS         *as3ResourcePointer `json:"clientTLS,omitempty"`
+		Label             string              `json:"label,omitempty"`
 	}
 
 	// as3CABundle maps to CA_Bundle in AS3 Resources
@@ -1281,6 +1285,7 @@ type (
 		TLS1_2Enabled        *bool                      `json:"tls1_2Enabled,omitempty"`
 		TLS1_3Enabled        bool                       `json:"tls1_3Enabled,omitempty"`
 		RenegotiationEnabled *bool                      `json:"renegotiationEnabled,omitempty"`
+		Label                string                     `json:"label,omitempty"`
 	}
 
 	// as3TLSServerCertificates maps to TLS_Server_certificates in AS3 Resources

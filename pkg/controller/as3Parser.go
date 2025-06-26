@@ -132,8 +132,8 @@ func (ap *AS3Parser) createPoliciesDecl(cfg *ResourceConfig, sharedApp as3Applic
 		//Create EndpointPolicy
 		ep := &as3EndpointPolicy{}
 		for _, rl := range pl.Rules {
-
 			ep.Class = "Endpoint_Policy"
+			ep.Label = ap.generateLabelForRscfg(cfg)
 			s := strings.Split(pl.Strategy, "/")
 			ep.Strategy = s[len(s)-1]
 
@@ -163,6 +163,7 @@ func (ap *AS3Parser) createPoolDecl(cfg *ResourceConfig, sharedApp as3Applicatio
 		pool.ServiceDownAction = v.ServiceDownAction
 		pool.SlowRampTime = v.SlowRampTime
 		pool.Remark = v.Description
+		pool.Label = ap.generateLabelForRscfg(cfg)
 		poolMemberSet := make(map[PoolMember]struct{})
 		for _, val := range v.Members {
 			// Skip duplicate pool members
@@ -314,7 +315,6 @@ func (ap *AS3Parser) createServiceDecl(cfg *ResourceConfig, sharedApp as3Applica
 		}
 		svc.Pool = &poolPointer
 	}
-
 	if cfg.Virtual.TLSTermination != TLSPassthrough {
 		svc.Layer4 = cfg.Virtual.IpProtocol
 		svc.Source = "0.0.0.0/0"
@@ -895,6 +895,7 @@ func (ap *AS3Parser) createUpdateTLSServer(resourceType string, prof CustomProfi
 			if prof.RenegotiationEnabled != nil {
 				tlsServer.RenegotiationEnabled = prof.RenegotiationEnabled
 			}
+			// label the TLS Server with the resource label
 			sharedApp[tlsServerName] = tlsServer
 			svc.ServerTLS = tlsServerName
 			if resourceType == VirtualServer || resourceType == IngressLink {
@@ -1017,6 +1018,7 @@ func (ap *AS3Parser) createMonitorDecl(cfg *ResourceConfig, sharedApp as3Applica
 		targetAddressStr := ""
 		monitor.TargetAddress = &targetAddressStr
 		monitor.TimeUnitilUp = v.TimeUntilUp
+		monitor.Label = ap.generateLabelForRscfg(cfg)
 		//Monitor type
 		switch v.Type {
 		case "http":
@@ -1248,7 +1250,8 @@ func (ap *AS3Parser) processCommonDecl(cfg *ResourceConfig, svc *as3Service) {
 			}
 		}
 	}
-
+	//Label service with resource config metadata
+	svc.Label = ap.generateLabelForRscfg(cfg)
 	//Process iRules for crd
 	ap.processIrulesForCRD(cfg, svc)
 }
@@ -1417,4 +1420,14 @@ func (ap *AS3Parser) createIngressLinkServiceDecl(cfg *ResourceConfig, sharedApp
 	}
 	ap.processCommonDecl(cfg, svc)
 	sharedApp[cfg.Virtual.Name] = svc
+}
+
+func (ap *AS3Parser) generateLabelForRscfg(cfg *ResourceConfig) string {
+	// Generate a label for the resource config
+	// This is used to identify the resource config in AS3 declarations
+	for resource, kind := range cfg.MetaData.baseResources {
+		label := fmt.Sprintf("%s/%s", kind, resource)
+		return label
+	}
+	return ""
 }
