@@ -813,6 +813,12 @@ type (
 	// List of NPL annotations
 	NPLAnnoations []NPLAnnotation
 
+	// multusNetworkStatus information from multus network status annotation
+	MultusNetworkStatus struct {
+		Name string   `json:"name"`
+		IPs  []string `json:"ips"`
+	}
+
 	// Store of CustomProfiles
 	ProcessedHostPath struct {
 		sync.Mutex

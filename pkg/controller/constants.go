@@ -45,4 +45,7 @@ const (
 	BLOCKAFFINITIES             = "blockaffinities"
 
 	CommonPartition = "Common"
+
+	MultusNetworkAnnotation       = "cis.f5.com/multus-network"
+	MultusNetworkStatusAnnotation = "multus-network"
 )

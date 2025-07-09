@@ -3704,14 +3704,66 @@ func (ctlr *Controller) processService(
 			for _, p := range subset.Ports {
 				var members []PoolMember
 				for _, addr := range subset.Addresses {
-					// Checking for headless services
-					if svc.Spec.ClusterIP == "None" || (addr.NodeName != nil && containsNode(nodes, *addr.NodeName)) {
-						member := PoolMember{
-							Address: addr.IP,
-							Port:    p.Port,
-							Session: "user-enabled",
+					// check for multus service
+					// Check if the service has multus-network annotation
+					if networkName, ok := svc.Annotations[MultusNetworkAnnotation]; ok {
+						clusterConfig := ctlr.multiClusterHandler.getClusterConfig(clusterName)
+						// fetch pod from informer
+						if clusterConfig != nil {
+							comInf, found := ctlr.getNamespacedCommonInformer(clusterName, svc.Namespace)
+							if found && comInf.podInformer != nil {
+								//get pod from informer cache
+								obj, exists, err := comInf.podInformer.GetIndexer().Get(addr.TargetRef.Name)
+								if exists && err == nil {
+									pod := obj.(*v1.Pod)
+									// get pod ip from multus network
+									podIp, ipFound := ctlr.getPodIPForMultusNetwork(pod, networkName)
+									if ipFound {
+										member := PoolMember{
+											Address: podIp,
+											Port:    p.Port,
+											Session: "user-enabled",
+										}
+										members = append(members, member)
+									} else {
+										log.Errorf("Pod %s in namespace %s does not have IP for network %s", addr.TargetRef.Name, eps.Namespace, networkName)
+									}
+								} else {
+									log.Errorf("Error getting pod %s in namespace %s: %v", addr.TargetRef.Name, eps.Namespace, err)
+									continue
+								}
+							} else {
+								//get pod from ep address
+								pod, err := clusterConfig.kubeClient.CoreV1().Pods(eps.Namespace).Get(context.TODO(), addr.TargetRef.Name, metav1.GetOptions{})
+								if err != nil {
+									log.Errorf("Error getting pod %s in namespace %s: %v", addr.TargetRef.Name, eps.Namespace, err)
+									continue
+								} else {
+									// get pod ip from multus network
+									podIp, found := ctlr.getPodIPForMultusNetwork(pod, networkName)
+									if found {
+										member := PoolMember{
+											Address: podIp,
+											Port:    p.Port,
+											Session: "user-enabled",
+										}
+										members = append(members, member)
+									} else {
+										log.Errorf("Pod %s in namespace %s does not have IP for network %s", addr.TargetRef.Name, eps.Namespace, networkName)
+									}
+								}
+							}
 						}
-						members = append(members, member)
+					} else {
+						// Checking for headless services
+						if svc.Spec.ClusterIP == "None" || (addr.NodeName != nil && containsNode(nodes, *addr.NodeName)) {
+							member := PoolMember{
+								Address: addr.IP,
+								Port:    p.Port,
+								Session: "user-enabled",
+							}
+							members = append(members, member)
+						}
 					}
 				}
 				portKey := portRef{name: p.Name, port: p.Port}
@@ -5637,4 +5689,22 @@ func matchesSecret(tlsProfile *cisapiv1.TLSProfile, secretName string) bool {
 		return clientSecretMatch || serverSecretMatch
 	}
 	return false
+}
+
+// Returns the IP for the given multus network from the pod annotations
+func (Ctlr *Controller) getPodIPForMultusNetwork(pod *v1.Pod, networkName string) (string, bool) {
+	netStatus, ok := pod.Annotations["k8s.v1.cni.cncf.io/networks-status"]
+	if !ok {
+		return "", false
+	}
+	var statuses []MultusNetworkStatus
+	if err := json.Unmarshal([]byte(netStatus), &statuses); err != nil {
+		return "", false
+	}
+	for _, status := range statuses {
+		if status.Name == networkName && len(status.IPs) > 0 {
+			return status.IPs[0], true
+		}
+	}
+	return "", false
 }
