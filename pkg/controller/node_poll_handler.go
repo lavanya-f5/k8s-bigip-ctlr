@@ -194,7 +194,28 @@ func (ctlr *Controller) processStaticRouteUpdate(
 	}
 	log.Debugf("Processing Node Updates for static routes")
 	routes := routeSection{}
-	routes.CISIdentifier = ctlr.Partition + "_" + strings.TrimPrefix(ctlr.Agent.PostManager.BIGIPURL, "https://")
+	// Use local cluster name to create unique CIS identifier across clusters
+	clusterName := ctlr.multiClusterHandler.LocalClusterName
+	var nodeLabelSelector string
+	if clusterConfig, ok := ctlr.multiClusterHandler.ClusterConfigs[clusterName]; ok {
+		nodeLabelSelector = clusterConfig.nodeLabelSelector
+	}
+	if clusterName != "" {
+		routes.CISIdentifier = strings.TrimPrefix(ctlr.Agent.PostManager.BIGIPURL, "https://") + "_" + clusterName
+		if nodeLabelSelector != "" {
+			routes.CISIdentifier += "_" + nodeLabelSelector
+		}
+		log.Infof("Using cluster-specific CIS identifier: %s (cluster: %s, nodeLabelSelector: %s)", routes.CISIdentifier, clusterName, nodeLabelSelector)
+	} else {
+		if nodeLabelSelector != "" {
+			routes.CISIdentifier = strings.TrimPrefix(ctlr.Agent.PostManager.BIGIPURL, "https://")
+			routes.CISIdentifier += "_" + nodeLabelSelector
+		} else {
+			// Don't set CIS identifier when no cluster name or no nodelabelselctor is configured
+			routes.CISIdentifier = ""
+			log.Warningf("Local cluster name not set. Multiple CIS instances across clusters may still cause route conflicts with shared-static-routes writing to same BIGIP instance!")
+		}
+	}
 	nodePodCIDRMap := ctlr.GetNodePodCIDRMap()
 	for _, obj := range nodes {
 		node := obj.(*v1.Node)
@@ -462,7 +483,29 @@ func (ctlr *Controller) processBlockAffinities(clusterName string) {
 		baListInf = infStore.dynamicInformers.CalicoBlockAffinityInformer.Informer().GetIndexer().List()
 	}
 	routes := routeSection{}
-	routes.CISIdentifier = ctlr.Partition + "_" + strings.TrimPrefix(ctlr.Agent.PostManager.BIGIPURL, "https://")
+	// Use local cluster name to create unique CIS identifier across clusters
+	localClusterName := ctlr.multiClusterHandler.LocalClusterName
+	var nodeLabelSelector string
+	if clusterConfig := ctlr.multiClusterHandler.getClusterConfig(localClusterName); clusterConfig != nil {
+		nodeLabelSelector = clusterConfig.nodeLabelSelector
+	}
+	if localClusterName != "" {
+		routes.CISIdentifier = strings.TrimPrefix(ctlr.Agent.PostManager.BIGIPURL, "https://") + "_" + localClusterName
+		if nodeLabelSelector != "" {
+			routes.CISIdentifier += "_" + nodeLabelSelector
+		}
+		log.Infof("Using cluster-specific CIS identifier for block affinities: %s (cluster: %s, nodeLabelSelector: %s)", routes.CISIdentifier, localClusterName, nodeLabelSelector)
+	} else {
+		if nodeLabelSelector != "" {
+			routes.CISIdentifier = strings.TrimPrefix(ctlr.Agent.PostManager.BIGIPURL, "https://")
+			routes.CISIdentifier += "_" + nodeLabelSelector
+			log.Infof("Using cluster-specific CIS identifier for block affinities: %s (nodeLabelSelector: %s)", routes.CISIdentifier, nodeLabelSelector)
+		} else {
+			// Don't set CIS identifier when no cluster name or no nodelabelselctor is configured
+			routes.CISIdentifier = ""
+			log.Warningf("Local cluster name not set. Multiple CIS instances across clusters may still cause route conflicts with shared-static-routes writing to same BIGIP instance!")
+		}
+	}
 	clusterConfig := ctlr.multiClusterHandler.getClusterConfig(clusterName)
 	for _, obj := range baListInf {
 		blockAffinity := obj.(*unstructured.Unstructured)
