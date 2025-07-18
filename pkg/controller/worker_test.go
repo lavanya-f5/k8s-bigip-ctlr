@@ -1169,8 +1169,8 @@ var _ = Describe("Worker Tests", func() {
 			ann2[NPLPodAnnotation] = "[{\"podPort\":8080,\"nodeIP\":\"10.10.10.1\",\"nodePort\":40001}]"
 			pod2.Annotations = ann2
 			mockCtlr.resources.Init()
-			mockCtlr.processPod(pod1, false)
-			mockCtlr.processPod(pod2, false)
+			mockCtlr.processPod(pod1, false, "")
+			mockCtlr.processPod(pod2, false, "")
 			var val1 NPLAnnoations
 			var val2 NPLAnnoations
 			json.Unmarshal([]byte(pod1.Annotations[NPLPodAnnotation]), &val1)
@@ -1198,13 +1198,13 @@ var _ = Describe("Worker Tests", func() {
 					Session: "user-enabled",
 				},
 			}
-			mems := mockCtlr.getEndpointsForNPL(intstr.FromInt(8080), pods)
+			mems := mockCtlr.getEndpointsForNPL(intstr.FromInt(8080), pods, "")
 			Expect(mems).To(Equal(members))
-			mockCtlr.processPod(pod1, true)
+			mockCtlr.processPod(pod1, true, "")
 			Expect(mockCtlr.resources.nplStore[namespace+"/"+pod1.Name]).To(BeNil())
 			ann[NPLPodAnnotation] = "[{\"podPort\",\"nodeIP\":\"10.10.10.1\",\"nodePort\":40000}]"
 			pod1.Annotations = ann
-			mockCtlr.processPod(pod1, false)
+			mockCtlr.processPod(pod1, false, "")
 			Expect(mockCtlr.resources.nplStore[namespace+"/"+pod1.Name]).To(BeNil())
 			Expect(mockCtlr.GetPodsForService("test", "svc", "", true)).To(BeNil())
 			Expect(mockCtlr.GetPodsForService("default", "svc", "", true)).To(BeNil())

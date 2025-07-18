@@ -100,7 +100,7 @@ func (ctlr *Controller) deleteResourceExternalClusterSvcRouteReference(rsKey res
 							if ctlr.PoolMemberType == NodePortLocal {
 								pods := ctlr.GetPodsForService(mSvcKey.namespace, mSvcKey.serviceName, mSvcKey.clusterName, true)
 								for _, pod := range pods {
-									ctlr.processPod(pod, true)
+									ctlr.processPod(pod, true, mSvcKey.clusterName)
 								}
 							}
 						} else {

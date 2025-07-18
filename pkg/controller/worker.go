@@ -709,7 +709,7 @@ func (ctlr *Controller) processResources() bool {
 
 	case Pod:
 		pod := rKey.rsc.(*v1.Pod)
-		_ = ctlr.processPod(pod, rscDelete)
+		_ = ctlr.processPod(pod, rscDelete, rKey.clusterName)
 		svc := ctlr.GetServicesForPod(pod, rKey.clusterName)
 		if nil == svc {
 			break
@@ -2926,7 +2926,7 @@ func (ctlr *Controller) fetchPoolMembersForService(serviceName string, serviceNa
 		if ctlr.PoolMemberType == NodePortLocal {
 			pods := ctlr.GetPodsForService(svcKey.namespace, svcKey.serviceName, svcKey.clusterName, true)
 			for _, pod := range pods {
-				ctlr.processPod(pod, false)
+				ctlr.processPod(pod, false, svcKey.clusterName)
 			}
 		}
 		poolMembers = append(poolMembers, ctlr.getPoolMembersForService(svcKey, servicePort, nodeMemberLabel)...)
@@ -3026,7 +3026,7 @@ func (ctlr *Controller) getPoolMembersForService(mSvcKey MultiClusterServiceKey,
 				// also we need to match the resource service port with service's actual port
 				if (servicePort.StrVal != "" && svcPort.Name == servicePort.StrVal) || svcPort.TargetPort == servicePort || svcPort.Port == servicePort.IntVal {
 					podPort := svcPort.TargetPort
-					mems := ctlr.getEndpointsForNPL(podPort, pods)
+					mems := ctlr.getEndpointsForNPL(podPort, pods, mSvcKey.clusterName)
 					poolMembers = append(poolMembers, mems...)
 				}
 			}
@@ -3067,10 +3067,17 @@ func (ctlr *Controller) getEndpointsForNodePort(
 func (ctlr *Controller) getEndpointsForNPL(
 	targetPort intstr.IntOrString,
 	pods []*v1.Pod,
+	clusterName string,
 ) []PoolMember {
 	var members []PoolMember
 	for _, pod := range pods {
-		anns, found := ctlr.resources.nplStore[pod.Namespace+"/"+pod.Name]
+		var anns NPLAnnoations
+		var found bool
+		if clusterName != "" {
+			anns, found = ctlr.resources.nplStore[pod.Namespace+"/"+pod.Name+"/"+clusterName]
+		} else {
+			anns, found = ctlr.resources.nplStore[pod.Namespace+"/"+pod.Name]
+		}
 		if !found {
 			continue
 		}
@@ -4941,8 +4948,13 @@ func (ctlr *Controller) matchSvcSelectorPodLabels(svcSelector, podLabel map[stri
 }
 
 // processPod populates NPL annotations for a pod in store.
-func (ctlr *Controller) processPod(pod *v1.Pod, ispodDeleted bool) error {
-	podKey := pod.Namespace + "/" + pod.Name
+func (ctlr *Controller) processPod(pod *v1.Pod, ispodDeleted bool, clusterName string) error {
+	var podKey string
+	if clusterName != "" {
+		podKey = pod.Namespace + "/" + pod.Name + "/" + clusterName
+	} else {
+		podKey = pod.Namespace + "/" + pod.Name
+	}
 	if ispodDeleted {
 		delete(ctlr.resources.nplStore, podKey)
 		log.Debugf("Deleting Pod '%v/%v' from CIS cache as it's not referenced by monitored resources", pod.Namespace, pod.Name)
