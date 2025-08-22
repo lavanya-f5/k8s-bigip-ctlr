@@ -752,9 +752,14 @@ func (ctlr *Controller) getABDeployIruleForIL(rsVSName string, partition string,
         set pool_retries 0
         set max_retries 2
         set request_headers ""
+        set request_payload ""
         set pool_list [list]
         set tried_pool_list [list]
         set active_pool ""
+        set http2_enabled 0
+        set grpc_request 0
+        set content_length 0
+        
         # Populate the pool list
         if {$ab_rule != ""} then {
             set service_rules [split $ab_rule ";"]
@@ -795,38 +800,145 @@ func (ctlr *Controller) getABDeployIruleForIL(rsVSName string, partition string,
 		%[3]s::respond 503
 		return
 	}`, dgPath, rsVSName, strings.ToUpper(tsType))
+
 	irule += fmt.Sprintf(`
 		when HTTP_REQUEST {
             set hostname [getfield [HTTP::host] ":" 1]
-			# Save the request headers if it is a GET request and not a retried request
-			if { [HTTP::method] eq "GET" && $retries == 0 } {
-				set request_headers [HTTP::request]
+            log local0.debug "http version [HTTP::version]"
+            
+            # Detect HTTP/2 protocol - Critical for gRPC support
+            if { [HTTP::version] eq "2.0" } {
+                set http2_enabled 1
+                log local0.debug "http2 request"
+            }
+            
+            # Enhanced gRPC detection
+            if { [HTTP::header exists "Content-Type"] } {
+                set content_type [HTTP::header "Content-Type"]
+                if { $content_type starts_with "application/grpc" } {
+                    set grpc_request 1
+                    log local0.debug "gRPC request detected: $content_type"
+                }
+            }
+            
+            # Additional gRPC detection via User-Agent or other headers
+            if { [HTTP::header exists "User-Agent"] && [HTTP::header "User-Agent"] contains "grpc" } {
+                set grpc_request 1
+                log local0.debug "gRPC detected via User-Agent: [HTTP::header User-Agent]"
+            }
+            
+            # Log hostname for debugging
+            log local0.debug "hostname is [HTTP::host] $hostname"
+            
+			# Enhanced request capture for retry scenarios
+			if { $retries == 0 } {
+                # For gRPC and HTTP/2, we need to handle all methods, not just GET
+                if { $grpc_request || $http2_enabled } {
+                    # Save complete request for retry
+                    set request_headers [HTTP::request]
+                    
+                    # For POST/PUT requests with payload, collect the data
+                    if { ([HTTP::method] eq "POST" || [HTTP::method] eq "PUT") && [HTTP::header exists "Content-Length"] } {
+                        set content_length [HTTP::header "Content-Length"]
+                        if { $content_length > 0 } {
+                            # Collect the payload for gRPC requests
+                            HTTP::collect $content_length
+                        }
+                    }
+                    log local0.debug "Captured HTTP/2/gRPC request for potential retry, method: [HTTP::method], content-length: $content_length"
+                } elseif { [HTTP::method] eq "GET" } {
+                    # Standard HTTP/1.1 GET handling
+                    set request_headers [HTTP::request]
+                    log local0.debug "Captured HTTP/1.1 GET request for retry"
+                }
 			}
 	    }
+	    
+	    when HTTP_REQUEST_DATA {
+            # Critical for gRPC: Save the request payload for retries
+            if { ($grpc_request || $http2_enabled) && $retries == 0 && [HTTP::payload length] > 0 } {
+                set request_payload [HTTP::payload]
+                log local0.debug "Saved request payload for retry, length: [HTTP::payload length]"
+            }
+        }
+        
 		when LB_FAILED {
-			# Select a new pool member from the next pool if we are retrying this request
-			if { $retries > 0 } {
-				log local0.debug "reloadbalancing to pool $next_pool with retry count $retries"
+			# Enhanced load balancer failure handling
+			log local0.debug "LB_FAILED event triggered for pool [LB::server pool]"
+			if { $retries > 0 && [info exists next_pool] && $next_pool != "" } {
+				log local0.debug "Load balancing failed, reselecting pool $next_pool with retry count $retries"
 				LB::reselect pool $next_pool
 			}
 		}
 
 		when HTTP_RESPONSE {
-			# Check if we got a 503 response
-			if { [HTTP::status] starts_with "5" } {
-				# Log the 503 response for debugging purposes
-				log local0. "Received response [HTTP::status] with pool [LB::server pool], retrying request with next pool"	
-				# Increment the retry counter
+			# Enhanced error detection for gRPC and HTTP/2
+			set response_status [HTTP::status]
+			set should_retry 0
+			
+			log local0.debug "Received response status: $response_status from pool [LB::server pool]"
+			
+			# Standard HTTP 5xx errors
+			if { $response_status starts_with "5" } {
+                set should_retry 1
+                log local0.debug "HTTP 5xx error detected: $response_status"
+            }
+            
+            # gRPC-specific error handling
+            if { $grpc_request } {
+                # Check grpc-status header (primary gRPC error indicator)
+                if { [HTTP::header exists "grpc-status"] } {
+                    set grpc_status [HTTP::header "grpc-status"]
+                    # Retry on specific gRPC error codes:
+                    # 14=UNAVAILABLE, 13=INTERNAL, 8=RESOURCE_EXHAUSTED, 4=DEADLINE_EXCEEDED, 2=UNKNOWN
+                    if { $grpc_status == "14" || $grpc_status == "13" || $grpc_status == "8" || $grpc_status == "4" || $grpc_status == "2" } {
+                        set should_retry 1
+                        set grpc_message ""
+                        if { [HTTP::header exists "grpc-message"] } {
+                            set grpc_message [HTTP::header "grpc-message"]
+                        }
+                        log local0.debug "gRPC error status detected: $grpc_status, message: $grpc_message"
+                    }
+                }
+                
+                # Handle connection termination errors (like RST_STREAM)
+                if { $response_status == "200" && ![HTTP::header exists "grpc-status"] } {
+                    # This could indicate a connection issue or stream termination
+                    set should_retry 1
+                    log local0.debug "Potential gRPC connection issue: HTTP 200 but no grpc-status header"
+                }
+            }
+            
+            # HTTP/2 specific error conditions
+            if { $http2_enabled } {
+                # Handle HTTP/2 stream errors and backend connectivity issues
+                if { $response_status == "502" || $response_status == "504" || $response_status == "521" } {
+                    set should_retry 1
+                    log local0.debug "HTTP/2 backend connectivity issue: $response_status"
+                }
+            }
+            
+            # Connection reset or timeout errors
+            if { $response_status == "0" || $response_status == "" } {
+                set should_retry 1
+                log local0.debug "Connection reset or timeout detected"
+            }
+            
+            if { $should_retry && $retries < $max_retries } {
+				log local0.debug "Initiating retry for response $response_status, current retry count: $retries"
 				incr retries
 		
-				# Get the current pool
+				# Get current pool for tracking
 				set current_pool [LB::server pool]
 				set current_pool_name [lindex [split $current_pool "/"] end]
-				lappend tried_pool_list $current_pool_name
-				# Find the next pool in the list
+				if { [lsearch $tried_pool_list $current_pool_name] == -1 } {
+				    lappend tried_pool_list $current_pool_name
+				}
+				
+				# Find next available pool
 				set next_pool ""
 				foreach pool $pool_list {
-					if { $pool == $current_pool || [lsearch -glob $tried_pool_list $pool] != -1 } {
+					if { [lsearch $tried_pool_list $pool] != -1 } {
 						continue
 					}
 					if { [active_members $pool] >= 1 } {
@@ -835,44 +947,84 @@ func (ctlr *Controller) getABDeployIruleForIL(rsVSName string, partition string,
 					}
 				}
 		
-				# If a next pool is found, retry the request with the next pool
+				# Retry with next pool if available
 				if { $next_pool != "" } {
 					pool $next_pool
 					lappend tried_pool_list $next_pool
-					HTTP::retry $request_headers
+					
+					# Protocol-specific retry logic
+					if { $grpc_request || $http2_enabled } {
+                        if { $request_payload != "" } {
+                            # For requests with payload, reconstruct the complete request
+                            log local0.debug "Retrying gRPC/HTTP2 request with payload to pool: $next_pool"
+                            HTTP::retry $request_headers $request_payload
+                        } else {
+                            # For requests without payload
+                            log local0.debug "Retrying gRPC/HTTP2 request without payload to pool: $next_pool"
+                            HTTP::retry $request_headers
+                        }
+                    } else {
+                        # Standard HTTP/1.1 retry
+                        log local0.debug "Retrying HTTP/1.1 request to pool: $next_pool"
+                        HTTP::retry $request_headers
+                    }
 					return
 				} else {
-                    # Increment pool retry counter
-                    incr pool_retries
-                    if { $pool_retries < $max_retries } {
-						# Try to reselect from reset tried pool list
+					# No more pools available, try pool rotation
+					incr pool_retries
+					if { $pool_retries < $max_retries } {
+						# Reset tried pool list for another round
 						set tried_pool_list [list]
+						# Find first available pool
 						foreach pool $pool_list {
-							if { $pool == $current_pool || [lsearch -glob $tried_pool_list $pool] != -1 } {
-								continue
-							}
-							if { [active_members $pool] >= 1 } {
+							if { $pool != $current_pool_name && [active_members $pool] >= 1 } {
 								set next_pool $pool
 								break
 							}
 						}
-                        if { $next_pool != "" } {
+						
+						if { $next_pool != "" } {
 							pool $next_pool
 							lappend tried_pool_list $next_pool
-							HTTP::retry $request_headers
+							
+							# Final retry attempt
+							if { $grpc_request || $http2_enabled } {
+                                if { $request_payload != "" } {
+                                    HTTP::retry $request_headers $request_payload
+                                } else {
+                                    HTTP::retry $request_headers
+                                }
+                            } else {
+                                HTTP::retry $request_headers
+                            }
+							log local0.debug "Final retry attempt to pool: $next_pool"
 							return
-						} else {
-							#no active pool member found in the retry loop, return 503
-							%[1]s::respond 503
 						}
-					# If no retries left, return a 503 (Service Unavailable)
-					} else {	
-						# If no next pool is found, return a 503 (Service Unavailable)
-						%[1]s::respond 503
 					}
+					
+					# All retry attempts exhausted
+					if { $grpc_request } {
+                        # Return appropriate gRPC error
+                        HTTP::respond 200 content "" "grpc-status" "14" "grpc-message" "Service Unavailable - All backend services failed"
+                        log local0.error "All gRPC retry attempts exhausted for request"
+                    } else {
+                        %[1]s::respond 503
+                        log local0.error "All HTTP retry attempts exhausted"
+                    }
 				}
+			} elseif { $should_retry } {
+			    # Max retries reached
+			    if { $grpc_request } {
+                    HTTP::respond 200 content "" "grpc-status" "14" "grpc-message" "Service Unavailable - Maximum retries exceeded"
+                    log local0.error "Maximum gRPC retries exceeded"
+                } else {
+                    %[1]s::respond 503
+                    log local0.error "Maximum HTTP retries exceeded"
+                }
 			}
 		}`, strings.ToUpper(tsType))
+
+	// ...existing code for HTTPS handling...
 	if serviceport.Port == DEFAULT_HTTPS_PORT {
 		irule += fmt.Sprintf(`
 			when SERVERSSL_CLIENTHELLO_SEND {
@@ -948,7 +1100,7 @@ func (ctlr *Controller) getPathBasedABDeployIRule(rsVSName string, partition str
 						    if { [active_members $pool_name] >= 1 } {
 							    return $pool_name
 						    } else {
-                                  # select other pool with active members
+						          # select other pool with active members
 						          if {$active_pool!= ""} then {
 						              return $active_pool
 						          }    
@@ -1079,7 +1231,6 @@ func (ctlr *Controller) getTLSIRule(rsVSName string, partition string, allowSour
 				set servername_lower [string tolower $tls_servername]
 				set domain_length [llength [split $servername_lower "."]]
 				set domain_wc [domain $servername_lower [expr {$domain_length - 1}] ]
-				set wc_host ".$domain_wc"
 				# Set routepath as combination of servername and url path
 				append routepath $servername_lower $sslpath
 				append wc_routepath $wc_host $sslpath
@@ -1273,8 +1424,8 @@ func (ctlr *Controller) getTLSIRule(rsVSName string, partition string, allowSour
 									# Bytes 0-1 of the extension are the extension type.
 									# Bytes 2-3 of the extension are the extension length.
 									binary scan $tls_extensions @${extension_start}SS extension_type extension_len
-									if { ! [ expr { [info exists extension_type] && [string is integer -strict $extension_type] } ] }  { reject ; event disable all; return; }
-									if { ! [ expr { [info exists extension_len] && [string is integer -strict $extension_len] } ] }  { reject ; event disable all; return; }
+									if { ! [ expr { [info exists extension_type] && [string is integer -strict extension_type] } ] }  { reject ; event disable all; return; }
+									if { ! [ expr { [info exists extension_len] && [string is integer -strict extension_len] } ] }  { reject ; event disable all; return; }
 	
 									# Extension type 00 is the ServerName extension.
 									if { $extension_type == "00" } {
@@ -1315,7 +1466,7 @@ func (ctlr *Controller) getTLSIRule(rsVSName string, partition string, allowSour
 										if { $passthru_dg_key != 0 || $passthru_dg_wc_key != 0 } {
 											SSL::disable serverside
 											set dflt_pool_passthrough ""
-		
+
 											# Disable Serverside SSL for Passthrough Class
 											set dflt_pool_passthrough [class match -value $servername_lower equals $passthru_class]
 											# If no match, try wildcard domain
