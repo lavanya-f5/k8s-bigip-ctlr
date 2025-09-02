@@ -810,6 +810,8 @@ func (ctlr *Controller) getABDeployIruleForIL(rsVSName string, partition string,
             if { [HTTP::version] eq "2.0" } {
                 set http2_enabled 1
                 log local0.debug "http2 request"
+                # set hostname to access across events for http2
+				table set hostname $hostname
             }
             
             # Enhanced gRPC detection
@@ -838,12 +840,9 @@ func (ctlr *Controller) getABDeployIruleForIL(rsVSName string, partition string,
                     set request_headers [HTTP::request]
                     
                     # For POST/PUT requests with payload, collect the data
-                    if { ([HTTP::method] eq "POST" || [HTTP::method] eq "PUT") && [HTTP::header exists "Content-Length"] } {
-                        set content_length [HTTP::header "Content-Length"]
-                        if { $content_length > 0 } {
+                    if { ([HTTP::method] eq "POST" || [HTTP::method] eq "PUT")  } {
                             # Collect the payload for gRPC requests
-                            HTTP::collect $content_length
-                        }
+                            HTTP::collect 65636
                     }
                     log local0.debug "Captured HTTP/2/gRPC request for potential retry, method: [HTTP::method], content-length: $content_length"
                 } elseif { [HTTP::method] eq "GET" } {
@@ -899,22 +898,6 @@ func (ctlr *Controller) getABDeployIruleForIL(rsVSName string, partition string,
                         }
                         log local0.debug "gRPC error status detected: $grpc_status, message: $grpc_message"
                     }
-                }
-                
-                # Handle connection termination errors (like RST_STREAM)
-                if { $response_status == "200" && ![HTTP::header exists "grpc-status"] } {
-                    # This could indicate a connection issue or stream termination
-                    set should_retry 1
-                    log local0.debug "Potential gRPC connection issue: HTTP 200 but no grpc-status header"
-                }
-            }
-            
-            # HTTP/2 specific error conditions
-            if { $http2_enabled } {
-                # Handle HTTP/2 stream errors and backend connectivity issues
-                if { $response_status == "502" || $response_status == "504" || $response_status == "521" } {
-                    set should_retry 1
-                    log local0.debug "HTTP/2 backend connectivity issue: $response_status"
                 }
             }
             
@@ -1044,7 +1027,13 @@ func (ctlr *Controller) getABDeployIruleForIL(rsVSName string, partition string,
 
     		}
         when SERVER_CONNECTED {
+            log local0.debug "SERVER_CONNECTED event triggered"
 			set reencryptssl_class "/%[1]s/%[2]s_ssl_reencrypt_serverssl_dg"
+            # For HTTP/2, retrieve hostname from table set in HTTP_REQUEST event
+            if {  ![info exists hostname] } {
+				set hostname [table lookup hostname]
+			}
+            log local0.debug "Using hostname for SSL profile selection: $hostname"
 			set sslpath $hostname
 			append sslpath "/"
 			set domain_length [llength [split $hostname "."]]
@@ -1052,6 +1041,7 @@ func (ctlr *Controller) getABDeployIruleForIL(rsVSName string, partition string,
 			set wc_host ".$domain_wc"
 			set wc_routepath ""
 			append wc_routepath $wc_host "/"
+            log local0.debug "Wildcard hostname for SSL profile selection: $wc_routepath"
 			if { [class exists $reencryptssl_class] } {
 				set reen [class match -value $sslpath equals $reencryptssl_class]
 				if { $reen equals "" } {
