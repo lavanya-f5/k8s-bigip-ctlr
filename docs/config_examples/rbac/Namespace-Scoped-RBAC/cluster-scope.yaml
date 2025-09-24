@@ -1,0 +1,49 @@
+# Cluster-scope RBAC for CIS (Least Privilege)
+# Apply this ONCE per cluster. Contains only ServiceAccount + minimal ClusterRole + Binding.
+# Drop optional rule blocks you do not need (see comments).
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bigip-ctlr
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: bigip-ctlr-cluster-min
+rules:
+  # OPTIONAL: Required if CIS discovers nodes (addresses / tunnel members / flannel/calico mapping)
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get","list","watch"]
+  # OPTIONAL: Needed only if using namespace label selector or dynamic namespace discovery
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get","list","watch"]
+  # OPTIONAL: Calico static routing (blockaffinities) support
+  - apiGroups: ["crd.projectcalico.org"]
+    resources: ["blockaffinities"]
+    verbs: ["get","list","watch"]
+  # OPTIONAL: OpenShift network CIDR detection
+  - apiGroups: ["config.openshift.io/v1"]
+    resources: ["network"]
+    verbs: ["list"]
+  # OPTIONAL: Read CRD schemas (generally safe to remove at runtime)
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get","list","watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: bigip-ctlr-cluster-min-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: bigip-ctlr-cluster-min
+subjects:
+  - kind: ServiceAccount
+    name: bigip-ctlr
+    namespace: kube-system
+
