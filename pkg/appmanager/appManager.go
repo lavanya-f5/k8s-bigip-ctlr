@@ -175,6 +175,7 @@ type Manager struct {
 	staticRoutingMode   bool
 	orchestrationCNI    string
 	staticRouteNodeCIDR string
+	poolMemberNodeCIDR  string
 	membersToDisable    map[string]map[string]struct{}
 }
 
@@ -255,6 +256,7 @@ type Params struct {
 	StaticRoutingMode   bool
 	OrchestrationCNI    string
 	StaticRouteNodeCIDR string
+	PoolMemberNodeCIDR  string
 	BigIPURL            string
 }
 
@@ -431,6 +433,7 @@ func NewManager(params *Params) *Manager {
 		staticRoutingMode:      params.StaticRoutingMode,
 		orchestrationCNI:       params.OrchestrationCNI,
 		staticRouteNodeCIDR:    params.StaticRouteNodeCIDR,
+		poolMemberNodeCIDR:     params.PoolMemberNodeCIDR,
 		membersToDisable:       make(map[string]map[string]struct{}),
 		BigIPURL:               params.BigIPURL,
 	}
@@ -3364,6 +3367,16 @@ func (appMgr *Manager) getNodes(
 		addrType = v1.NodeExternalIP
 	}
 
+	// Parse CIDR if specified
+	var poolMemberNetwork *net.IPNet
+	var err error
+	if appMgr.poolMemberNodeCIDR != "" {
+		_, poolMemberNetwork, err = net.ParseCIDR(appMgr.poolMemberNodeCIDR)
+		if err != nil {
+			return nil, fmt.Errorf("invalid pool-member-node-cidr %v: %v", appMgr.poolMemberNodeCIDR, err)
+		}
+	}
+
 	// Append list of nodes to watchedNodes
 	for _, node := range nodes {
 		// Ignore the Nodes with status NotReady
@@ -3378,15 +3391,73 @@ func (appMgr *Manager) getNodes(
 			continue
 		}
 		nodeAddrs := node.Status.Addresses
-		for _, addr := range nodeAddrs {
-			if addr.Type == addrType {
-				n := Node{
-					Name: node.ObjectMeta.Name,
-					Addr: addr.Address,
+		var selectedAddr string
+
+		// First, try to find an address of the preferred type within CIDR (if specified)
+		if poolMemberNetwork != nil {
+			if appMgr.orchestrationCNI == OVN_K8S {
+				//get node ip from host addresses annotation
+				annotations := node.Annotations
+				var hostaddresses string
+				var ok bool
+				var nodeIP string
+				var err error
+				if hostaddresses, ok = annotations[OVNK8sNodeIPAnnotation2]; !ok {
+					//For ocp 4.14 and above check for new annotation
+					if hostaddresses, ok = annotations[OVNK8sNodeIPAnnotation3]; !ok {
+						log.Warningf("Host addresses annotation %v not found on node %v static route not added", OVNK8sNodeIPAnnotation2, node.Name)
+						continue
+					} else {
+						nodeIP, err = parseHostCIDRS(hostaddresses, poolMemberNetwork)
+						if err != nil {
+							log.Warningf("Node IP annotation %v not properly configured for node %v:%v", OVNK8sNodeIPAnnotation3, node.Name, err)
+							continue
+						}
+						selectedAddr = nodeIP
+					}
 				}
-				watchedNodes = append(watchedNodes, n)
+			}
+			for _, addr := range nodeAddrs {
+				if addr.Type == addrType {
+					ip := net.ParseIP(addr.Address)
+					if ip != nil && poolMemberNetwork.Contains(ip) {
+						selectedAddr = addr.Address
+						break
+					}
+				}
+			}
+			// If no preferred type found in CIDR, try any address type within CIDR
+			if selectedAddr == "" {
+				for _, addr := range nodeAddrs {
+					ip := net.ParseIP(addr.Address)
+					if ip != nil && poolMemberNetwork.Contains(ip) {
+						selectedAddr = addr.Address
+						break
+					}
+				}
+			}
+			// Log warning if no address found in CIDR
+			if selectedAddr == "" {
+				log.Warningf("No address found for node %s within CIDR %s", node.ObjectMeta.Name, appMgr.poolMemberNodeCIDR)
+				continue
+			}
+		} else {
+			// No CIDR filtering - use first address of preferred type
+			for _, addr := range nodeAddrs {
+				if addr.Type == addrType {
+					selectedAddr = addr.Address
+					break
+				}
+			}
+			if selectedAddr == "" {
+				continue // Skip node if no address of preferred type found
 			}
 		}
+		n := Node{
+			Name: node.ObjectMeta.Name,
+			Addr: selectedAddr,
+		}
+		watchedNodes = append(watchedNodes, n)
 	}
 	return watchedNodes, nil
 }

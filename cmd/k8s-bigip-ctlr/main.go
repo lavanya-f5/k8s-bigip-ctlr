@@ -112,7 +112,7 @@ var (
 	version   string
 	buildInfo string
 
-	// Flag sets and supported flags
+	// Flag sets and and supported flags
 	flags             *pflag.FlagSet
 	globalFlags       *pflag.FlagSet
 	bigIPFlags        *pflag.FlagSet
@@ -217,6 +217,7 @@ var (
 	orchestrationCNI    *string
 	sharedStaticRoutes  *bool
 	staticRouteNodeCIDR *string
+	poolMemberNodeCIDR  *string
 	// package variables
 	isNodePort         bool
 	watchAllNamespaces bool
@@ -286,6 +287,7 @@ func _init() {
 	orchestrationCNI = globalFlags.String("orchestration-cni", "", "Optional, flag to specify orchestration CNI configured")
 	sharedStaticRoutes = globalFlags.Bool("shared-static-routes", false, "Optional, flag to enable configuration of static routes on bigip in common partition")
 	staticRouteNodeCIDR = globalFlags.String("static-route-node-cidr", "", "Optional, flag to specify node network cidr to be used for static routing when node has multiple interfaces.This is supported only with CNI ovn-k8s")
+	poolMemberNodeCIDR = globalFlags.String("pool-member-node-cidr", "", "Optional, flag to specify node network cidr to be used for pool member when node has multiple interfaces.This is supported only with Nodeport Mode")
 	// Custom Resource
 	enableIPV6 = globalFlags.Bool("enable-ipv6", false,
 		"Optional, flag to enbale ipv6 network support.")
@@ -1038,6 +1040,7 @@ func initController(
 			NodePollInterval:            *nodePollInterval,
 			NodeLabelSelector:           *nodeLabelSelector,
 			IPAM:                        *ipam,
+			PoolMemberNodeCIDR:          *poolMemberNodeCIDR,
 			IPAMClusterLabel:            *ipamClusterLabel,
 			IpamNamespace:               *ipamNamespace,
 			ShareNodes:                  *shareNodes,
@@ -1404,6 +1407,7 @@ func getAppManagerParams() appmanager.Params {
 		StaticRoutingMode:      *staticRoutingMode,
 		OrchestrationCNI:       *orchestrationCNI,
 		StaticRouteNodeCIDR:    *staticRouteNodeCIDR,
+		PoolMemberNodeCIDR:     *poolMemberNodeCIDR,
 		BigIPURL:               *bigIPURL,
 	}
 }

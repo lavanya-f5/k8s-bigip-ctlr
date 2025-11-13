@@ -93,6 +93,7 @@ type (
 		StaticRoutingMode           bool
 		OrchestrationCNI            string
 		StaticRouteNodeCIDR         string
+		poolMemberNodeCIDR          string
 		cacheIPAMHostSpecs          CacheIPAM
 		multiClusterHandler         *ClusterHandler
 		multiClusterResources       *MultiClusterResourceStore
@@ -200,13 +201,15 @@ type (
 		NamespaceLabel string
 		Partition      string
 		// Agent                       *Agent
-		PoolMemberType              string
-		VXLANName                   string
-		VXLANMode                   string
-		CiliumTunnelName            string
-		UseNodeInternal             bool
-		NodePollInterval            int
-		NodeLabelSelector           string
+		PoolMemberType    string
+		VXLANName         string
+		VXLANMode         string
+		CiliumTunnelName  string
+		UseNodeInternal   bool
+		NodePollInterval  int
+		NodeLabelSelector string
+		// Pool member subnet selection - specify CIDR to filter node IPs for pool members
+		PoolMemberNodeCIDR          string
 		ShareNodes                  bool
 		IPAM                        bool
 		IPAMClusterLabel            string

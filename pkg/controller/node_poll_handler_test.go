@@ -648,4 +648,146 @@ var _ = Describe("Node Poller Handler", func() {
 	//			"IngressLink should not be added to resource queue for processing")
 	//	})
 	//})
+
+	It("poolMemberNodeCIDR support", func() {
+		mockCtlr.setNodeInformer("")
+		mockCtlr.UseNodeInternal = true
+
+		// Test case 1: Valid CIDR with matching internal IP
+		mockCtlr.poolMemberNodeCIDR = "10.0.0.0/24"
+		nodeAddr1 := v1.NodeAddress{
+			Type:    v1.NodeInternalIP,
+			Address: "10.0.0.5",
+		}
+		nodeAddr2 := v1.NodeAddress{
+			Type:    v1.NodeExternalIP,
+			Address: "54.1.1.10",
+		}
+		nodeObjs := []v1.Node{
+			*test.NewNode("worker1", "1", false,
+				[]v1.NodeAddress{nodeAddr1, nodeAddr2}, nil, nil),
+		}
+
+		for _, node := range nodeObjs {
+			mockCtlr.addNode(&node)
+		}
+
+		nodes, err := mockCtlr.getNodes(nodeObjs)
+		Expect(err).To(BeNil(), "Failed to get nodes")
+		Expect(len(nodes)).To(Equal(1))
+		Expect(nodes[0].Addr).To(Equal("10.0.0.5"), "Should select internal IP within CIDR")
+
+		// Test case 2: Internal IP not in CIDR, fallback to any IP in CIDR
+		mockCtlr.poolMemberNodeCIDR = "10.0.0.0/24"
+		nodeAddr3 := v1.NodeAddress{
+			Type:    v1.NodeInternalIP,
+			Address: "10.1.0.7", // outside CIDR
+		}
+		nodeAddr4 := v1.NodeAddress{
+			Type:    v1.NodeExternalIP,
+			Address: "10.0.0.20", // inside CIDR
+		}
+		nodeObjs2 := []v1.Node{
+			*test.NewNode("worker2", "1", false,
+				[]v1.NodeAddress{nodeAddr3, nodeAddr4}, nil, nil),
+		}
+
+		nodes, err = mockCtlr.getNodes(nodeObjs2)
+		Expect(err).To(BeNil(), "Failed to get nodes")
+		Expect(len(nodes)).To(Equal(1))
+		Expect(nodes[0].Addr).To(Equal("10.0.0.20"), "Should fallback to any IP in CIDR")
+
+		// Test case 3: No IP addresses in CIDR - node should be skipped
+		mockCtlr.poolMemberNodeCIDR = "192.168.1.0/24"
+		nodeAddr5 := v1.NodeAddress{
+			Type:    v1.NodeInternalIP,
+			Address: "10.1.0.8",
+		}
+		nodeAddr6 := v1.NodeAddress{
+			Type:    v1.NodeExternalIP,
+			Address: "54.9.9.9",
+		}
+		nodeObjs3 := []v1.Node{
+			*test.NewNode("worker3", "1", false,
+				[]v1.NodeAddress{nodeAddr5, nodeAddr6}, nil, nil),
+		}
+
+		nodes, err = mockCtlr.getNodes(nodeObjs3)
+		Expect(err).To(BeNil(), "Failed to get nodes")
+		Expect(len(nodes)).To(Equal(0), "Node should be skipped when no IPs match CIDR")
+
+		// Test case 4: UseNodeInternal = false, prefer external IP in CIDR
+		mockCtlr.UseNodeInternal = false
+		mockCtlr.poolMemberNodeCIDR = "54.0.0.0/8"
+		nodeAddr7 := v1.NodeAddress{
+			Type:    v1.NodeInternalIP,
+			Address: "10.0.0.10",
+		}
+		nodeAddr8 := v1.NodeAddress{
+			Type:    v1.NodeExternalIP,
+			Address: "54.3.3.3",
+		}
+		nodeObjs4 := []v1.Node{
+			*test.NewNode("worker4", "1", false,
+				[]v1.NodeAddress{nodeAddr7, nodeAddr8}, nil, nil),
+		}
+
+		nodes, err = mockCtlr.getNodes(nodeObjs4)
+		Expect(err).To(BeNil(), "Failed to get nodes")
+		Expect(len(nodes)).To(Equal(1))
+		Expect(nodes[0].Addr).To(Equal("54.3.3.3"), "Should select external IP within CIDR when UseNodeInternal=false")
+
+		// Test case 5: Invalid CIDR should return error
+		mockCtlr.poolMemberNodeCIDR = "invalid-cidr"
+		nodes, err = mockCtlr.getNodes(nodeObjs)
+		Expect(err).ToNot(BeNil(), "Should return error for invalid CIDR")
+		Expect(err.Error()).To(ContainSubstring("invalid pool-member-node-cidr"))
+
+		// Test case 6: Empty CIDR - should use default behavior
+		mockCtlr.poolMemberNodeCIDR = ""
+		mockCtlr.UseNodeInternal = true
+		nodeObjs5 := []v1.Node{
+			*test.NewNode("worker5", "1", false,
+				[]v1.NodeAddress{nodeAddr1, nodeAddr2}, nil, nil),
+		}
+
+		nodes, err = mockCtlr.getNodes(nodeObjs5)
+		Expect(err).To(BeNil(), "Failed to get nodes")
+		Expect(len(nodes)).To(Equal(1))
+		Expect(nodes[0].Addr).To(Equal("10.0.0.5"), "Should use default behavior when CIDR is empty")
+
+		// Test case 7: Multiple nodes with mixed CIDR scenarios
+		mockCtlr.poolMemberNodeCIDR = "10.0.0.0/24"
+		mockCtlr.UseNodeInternal = true
+		mixedNodeObjs := []v1.Node{
+			*test.NewNode("worker-in-cidr", "1", false,
+				[]v1.NodeAddress{
+					{Type: v1.NodeInternalIP, Address: "10.0.0.15"},
+					{Type: v1.NodeExternalIP, Address: "54.1.1.15"},
+				}, nil, nil),
+			*test.NewNode("worker-out-cidr", "1", false,
+				[]v1.NodeAddress{
+					{Type: v1.NodeInternalIP, Address: "172.16.0.5"},
+					{Type: v1.NodeExternalIP, Address: "54.1.1.20"},
+				}, nil, nil),
+			*test.NewNode("worker-fallback", "1", false,
+				[]v1.NodeAddress{
+					{Type: v1.NodeInternalIP, Address: "172.16.0.10"},
+					{Type: v1.NodeExternalIP, Address: "10.0.0.25"}, // External IP in CIDR
+				}, nil, nil),
+		}
+
+		nodes, err = mockCtlr.getNodes(mixedNodeObjs)
+		Expect(err).To(BeNil(), "Failed to get nodes")
+		Expect(len(nodes)).To(Equal(2), "Should get 2 nodes - one with internal IP in CIDR, one with external IP in CIDR")
+
+		// Verify the addresses
+		nodeAddrs := make([]string, len(nodes))
+		for i, node := range nodes {
+			nodeAddrs[i] = node.Addr
+		}
+		Expect(nodeAddrs).To(ContainElement("10.0.0.15"), "Should contain internal IP in CIDR")
+		Expect(nodeAddrs).To(ContainElement("10.0.0.25"), "Should contain external IP in CIDR as fallback")
+		Expect(nodeAddrs).ToNot(ContainElement("172.16.0.5"), "Should not contain internal IP outside CIDR")
+	})
 })
